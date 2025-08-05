@@ -13,7 +13,7 @@ class GroceryScraper {
         };
     }
 
-    async scrapeStore(storeName, query, maxResults = 50) {
+    async scrapeStore(storeName, query, maxResults = 20) {
         const scraper = this.scrapers[storeName.toLowerCase()];
         if (!scraper) {
             throw new Error(`Store "${storeName}" not supported. Available stores: ${Object.keys(this.scrapers).join(', ')}`);

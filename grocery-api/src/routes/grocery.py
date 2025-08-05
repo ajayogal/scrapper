@@ -3,10 +3,24 @@ from flask_cors import cross_origin
 import subprocess
 import json
 import os
+import hashlib
+import time
 
 grocery_bp = Blueprint('grocery', __name__)
 
-def run_node_scraper(query, store='all', max_results=20):
+# In-memory cache for search results
+search_cache = {}
+CACHE_DURATION = 300  # 5 minutes in seconds
+
+def get_cache_key(query, store):
+    """Generate a cache key for the search parameters"""
+    return hashlib.md5(f"{query.lower()}:{store}".encode()).hexdigest()
+
+def is_cache_valid(cache_entry):
+    """Check if cache entry is still valid"""
+    return time.time() - cache_entry['timestamp'] < CACHE_DURATION
+
+def run_node_scraper(query, store='all', max_results=200):
     """Run the Node.js scraper using subprocess"""
     try:
         # Get the path to the grocery_scraper directory
@@ -63,7 +77,7 @@ def run_node_scraper(query, store='all', max_results=20):
 @grocery_bp.route('/search', methods=['POST'])
 @cross_origin()
 def search_products():
-    """Search for products across all stores or a specific store using Node.js scraper"""
+    """Search for products across all stores or a specific store using Node.js scraper with caching"""
     try:
         data = request.get_json()
         
@@ -77,34 +91,45 @@ def search_products():
         store = data.get('store', 'all')
         page = data.get('page', 1)
         per_page = data.get('perPage', 10)
-        max_results = per_page * 3  # Get more results to ensure we have enough for pagination
         
-        # Validate max_results
-        if max_results > 100:
-            max_results = 100
+        # Generate cache key
+        cache_key = get_cache_key(query, store)
         
-        # Run the Node.js scraper
-        scraper_result = run_node_scraper(query, store, max_results)
-        
-        if 'error' in scraper_result:
-            return jsonify({
-                'error': 'Failed to scrape products',
-                'details': scraper_result['error'],
-                'debug': scraper_result
-            }), 500
-        
-        # Extract products from scraper result
-        if 'products' in scraper_result:
-            all_products = scraper_result['products']
-        elif isinstance(scraper_result, list):
-            all_products = scraper_result
+        # Check if we have cached results that are still valid
+        if cache_key in search_cache and is_cache_valid(search_cache[cache_key]):
+            print(f"Using cached results for query: {query}, store: {store}")
+            all_products = search_cache[cache_key]['products']
         else:
-            all_products = []
+            print(f"Fetching fresh results for query: {query}, store: {store}")
+            # Fetch more results initially to reduce the need for re-scraping
+            # Set a higher limit to get comprehensive results
+            scraper_result = run_node_scraper(query, store, max_results=200)
+            
+            if 'error' in scraper_result:
+                return jsonify({
+                    'error': 'Failed to scrape products',
+                    'details': scraper_result['error'],
+                    'debug': scraper_result
+                }), 500
+            
+            # Extract products from scraper result
+            if 'products' in scraper_result:
+                all_products = scraper_result['products']
+            elif isinstance(scraper_result, list):
+                all_products = scraper_result
+            else:
+                all_products = []
+            
+            # Sort by price (cheapest first)
+            all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
+            
+            # Cache the results
+            search_cache[cache_key] = {
+                'products': all_products,
+                'timestamp': time.time()
+            }
         
-        # Sort by price (cheapest first)
-        all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
-        
-        # Apply pagination
+        # Apply pagination to cached results
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
         paginated_products = all_products[start_idx:end_idx]
@@ -120,7 +145,8 @@ def search_products():
             'totalResults': len(all_products),
             'currentPageResults': len(paginated_products),
             'hasMore': has_more,
-            'products': paginated_products
+            'products': paginated_products,
+            'cached': cache_key in search_cache and is_cache_valid(search_cache[cache_key])
         })
     
     except Exception as e:
@@ -152,7 +178,22 @@ def health_check():
     return jsonify({
         'success': True,
         'status': 'healthy',
-        'scraper_available': True  # Node.js scraper is available via subprocess
+        'scraper_available': True,  # Node.js scraper is available via subprocess
+        'cache_entries': len(search_cache),
+        'cache_keys': list(search_cache.keys())
+    })
+
+@grocery_bp.route('/cache/clear', methods=['POST'])
+@cross_origin()
+def clear_cache():
+    """Clear the search cache"""
+    global search_cache
+    cache_count = len(search_cache)
+    search_cache.clear()
+    return jsonify({
+        'success': True,
+        'message': f'Cleared {cache_count} cache entries',
+        'cache_entries': len(search_cache)
     })
 
 # Mock endpoint for development/testing

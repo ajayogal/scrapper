@@ -1,7 +1,7 @@
 {
   "name": "grocery_scraper",
   "version": "1.0.0",
-  "description": "A Node.js web scraping tool for Australian grocery stores (Woolworths, Coles, IGA, Harris Farm Markets)",
+  "description": "A Node.js web scraping tool for Australian grocery stores (Woolworths, Coles, IGA, Harris Farm Markets, Aldi)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -15,12 +15,14 @@
     "coles",
     "iga",
     "harris-farm",
+    "aldi",
     "puppeteer",
     "nodejs"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "axios": "^1.6.0",
     "cheerio": "^1.1.2",
     "puppeteer": "^24.15.0"
   },

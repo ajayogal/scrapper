@@ -2,6 +2,7 @@ const WoolworthsScraper = require('./scrapers/woolworths');
 const ColesScraper = require('./scrapers/coles');
 const IGAScraper = require('./scrapers/iga');
 const HarrisScraper = require('./scrapers/harris');
+const AldiScraper = require('./scrapers/aldi');
 
 class GroceryScraper {
     constructor() {
@@ -9,7 +10,8 @@ class GroceryScraper {
             woolworths: new WoolworthsScraper(),
             coles: new ColesScraper(),
             iga: new IGAScraper(),
-            harris: new HarrisScraper()
+            harris: new HarrisScraper(),
+            aldi: new AldiScraper()
         };
     }
 

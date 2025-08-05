@@ -133,6 +133,7 @@ def get_stores():
     """Get list of supported stores"""
     stores = [
         {'id': 'all', 'name': 'All Stores'},
+        {'id': 'aldi', 'name': 'Aldi'},
         {'id': 'woolworths', 'name': 'Woolworths'},
         {'id': 'coles', 'name': 'Coles'},
         {'id': 'iga', 'name': 'IGA'},
@@ -165,7 +166,7 @@ def mock_search():
     per_page = data.get('perPage', 10)
     
     # Generate more mock data to ensure we have at least 10+ products
-    stores = ["Woolworths", "Coles", "IGA", "Harris Farm Markets"]
+    stores = ["Woolworths", "Coles", "IGA", "Harris Farm Markets", "Aldi"]
     brands = ["Brand A", "Brand B", "Premium", "Organic", "Home Brand", "Select", "Fresh"]
     categories = ["Dairy", "Bakery", "Meat", "Produce", "Pantry", "Frozen", "Organic"]
     

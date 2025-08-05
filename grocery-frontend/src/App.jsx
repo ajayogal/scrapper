@@ -307,6 +307,7 @@ function App() {
                   <SelectItem value="coles">Coles</SelectItem>
                   <SelectItem value="iga">IGA</SelectItem>
                   <SelectItem value="harris">Harris Farm Markets</SelectItem>
+                  <SelectItem value="aldi">Aldi</SelectItem>
                 </SelectContent>
               </Select>
 

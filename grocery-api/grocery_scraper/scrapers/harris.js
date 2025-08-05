@@ -28,6 +28,7 @@ class HarrisScraper {
             await this.page.waitForSelector('a[href*="/product"], .product, [class*="product"]', { timeout: 15000 });
 
             const products = [];
+            const seenProducts = new Set(); // Track unique products
             let currentResults = 0;
 
             while (currentResults < maxResults) {
@@ -55,6 +56,15 @@ class HarrisScraper {
                     const productUrl = $product.find('a').first().attr('href') || ($product.is('a') ? $product.attr('href') : '');
 
                     if (name && priceText) {
+                        // Create unique identifier for product
+                        const productId = `${name.toLowerCase().trim()}-${priceText.replace(/[^0-9.]/g, '')}`;
+                        
+                        // Skip if we've already seen this product
+                        if (seenProducts.has(productId)) {
+                            return;
+                        }
+                        seenProducts.add(productId);
+                        
                         // Extract discount information
                         let discount = '';
                         let discountedPrice = '';

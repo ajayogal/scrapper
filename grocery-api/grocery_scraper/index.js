@@ -133,7 +133,7 @@ Examples:
   node index.js search coffee coles 20        - Search Coles for coffee (max 20 results)
   node index.js search "organic eggs" harris   - Search Harris Farm for organic eggs
 
-Supported stores: woolworths, coles, iga, harris
+Supported stores: woolworths, coles, iga, harris, aldi
         `);
         return;
     }

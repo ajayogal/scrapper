@@ -74,18 +74,11 @@ def fetch_iga_products(query, limit=100, store_id='32600'):
                     product['price'] = price_info
                     product['discount_price'] = None
                 
-                # Handle image URL - IGA has nested image object with multiple sizes
+                # Handle image URL
                 image_url = None
                 if 'image' in item:
                     if isinstance(item['image'], dict):
-                        # Try different image size options in order of preference
-                        image_url = (item['image'].get('default') or 
-                                   item['image'].get('details') or 
-                                   item['image'].get('cell') or 
-                                   item['image'].get('template') or 
-                                   item['image'].get('zoom') or
-                                   item['image'].get('url') or 
-                                   item['image'].get('src'))
+                        image_url = item['image'].get('url', item['image'].get('src'))
                     else:
                         image_url = item['image']
                 elif 'imageUrl' in item:
@@ -93,16 +86,11 @@ def fetch_iga_products(query, limit=100, store_id='32600'):
                 elif 'images' in item and len(item['images']) > 0:
                     first_image = item['images'][0]
                     if isinstance(first_image, dict):
-                        image_url = (first_image.get('default') or 
-                                   first_image.get('details') or 
-                                   first_image.get('url') or 
-                                   first_image.get('src'))
+                        image_url = first_image.get('url', first_image.get('src'))
                     else:
                         image_url = first_image
                 
                 product['image'] = image_url
-                product['brand'] = item.get('brand', 'IGA')
-                product['unitPrice'] = item.get('pricePerUnit', 'N/A')
                 product['store'] = 'IGA'
                 products.append(product)
         else:
@@ -172,9 +160,7 @@ if __name__ == '__main__':
             print(f"Price: {product['price']}")
             print(f"Discount Price: {product['discount_price'] if product['discount_price'] else 'No discount'}")
             print(f"Image URL: {product['image']}")
-            print(f"Brand: {product['brand']}")
             print(f"Store: {product['store']}")
-            print(f"Unit Price: {product['unitPrice']}")
             print("---")
     else:
         print("No products found using the API approach.")

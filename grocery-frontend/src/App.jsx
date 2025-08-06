@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
-import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus } from 'lucide-react'
+import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus, Trash2, RefreshCw } from 'lucide-react'
 import './App.css'
 
 function App() {
@@ -19,75 +19,11 @@ function App() {
   const [currentPage, setCurrentPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
   const [totalResults, setTotalResults] = useState(0)
+  const [clearingCache, setClearingCache] = useState(false)
+  const [cacheMessage, setCacheMessage] = useState('')
+  const [searchError, setSearchError] = useState('')
 
-  // Mock data for development - will be replaced with API calls
-  const mockProducts = [
-    {
-      title: "Full Cream Milk 2L",
-      store: "Woolworths",
-      price: "$3.50",
-      discountedPrice: "$3.20",
-      discount: "Save $0.30",
-      numericPrice: 3.20,
-      inStock: true,
-      unitPrice: "$1.60/L",
-      imageUrl: "https://via.placeholder.com/150x150/4CAF50/white?text=Milk",
-      brand: "Dairy Farmers",
-      category: "Dairy"
-    },
-    {
-      title: "Full Cream Milk 2L",
-      store: "Coles",
-      price: "$3.80",
-      discountedPrice: "",
-      discount: "",
-      numericPrice: 3.80,
-      inStock: true,
-      unitPrice: "$1.90/L",
-      imageUrl: "https://via.placeholder.com/150x150/2196F3/white?text=Milk",
-      brand: "Coles",
-      category: "Dairy"
-    },
-    {
-      title: "Organic Full Cream Milk 2L",
-      store: "Harris Farm Markets",
-      price: "$5.50",
-      discountedPrice: "$4.95",
-      discount: "10% Off",
-      numericPrice: 4.95,
-      inStock: false,
-      unitPrice: "$2.48/L",
-      imageUrl: "https://via.placeholder.com/150x150/FF9800/white?text=Organic",
-      brand: "Organic Valley",
-      category: "Dairy"
-    },
-    {
-      title: "Premium Milk 2L",
-      store: "IGA",
-      price: "$4.00",
-      discountedPrice: "$3.20",
-      discount: "20% Off",
-      numericPrice: 3.20,
-      inStock: true,
-      unitPrice: "$1.60/L",
-      imageUrl: "https://via.placeholder.com/150x150/9C27B0/white?text=Premium",
-      brand: "Farmers Union",
-      category: "Dairy"
-    },
-    {
-      title: "Budget Milk 2L",
-      store: "Woolworths",
-      price: "$10.00",
-      discountedPrice: "$5.00",
-      discount: "Save $5.00",
-      numericPrice: 5.00,
-      inStock: true,
-      unitPrice: "$2.50/L",
-      imageUrl: "https://via.placeholder.com/150x150/FF5722/white?text=Budget",
-      brand: "Home Brand",
-      category: "Dairy"
-    }
-  ]
+
 
   const handleSearch = async (resetProducts = true) => {
     if (!searchQuery.trim()) return
@@ -96,6 +32,7 @@ function App() {
       setLoading(true)
       setProducts([])
       setCurrentPage(1)
+      setSearchError('') // Clear any previous errors
     } else {
       setLoadingMore(true)
     }
@@ -135,11 +72,12 @@ function App() {
       }
     } catch (error) {
       console.error('Search failed:', error)
-      // Fallback to mock data if API fails
+      // Clear products on API failure - show no results
       if (resetProducts) {
-        setProducts(mockProducts)
+        setProducts([])
         setHasMore(false)
-        setTotalResults(mockProducts.length)
+        setTotalResults(0)
+        setSearchError('Unable to search products. Please check your connection and try again.')
       }
     } finally {
       setLoading(false)
@@ -149,6 +87,41 @@ function App() {
 
   const handleLoadMore = () => {
     handleSearch(false)
+  }
+
+  const handleClearCache = async () => {
+    setClearingCache(true)
+    setCacheMessage('')
+    
+    try {
+      const response = await fetch('http://localhost:5002/api/grocery/cache/clear', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to clear cache')
+      }
+      
+      const data = await response.json()
+      
+      if (data.success) {
+        setCacheMessage(data.message)
+        // Clear the current search results to force fresh data on next search
+        setProducts([])
+        setTimeout(() => setCacheMessage(''), 3000) // Clear message after 3 seconds
+      } else {
+        throw new Error(data.error || 'Failed to clear cache')
+      }
+    } catch (error) {
+      console.error('Cache clear failed:', error)
+      setCacheMessage('Failed to clear cache. Please try again.')
+      setTimeout(() => setCacheMessage(''), 3000)
+    } finally {
+      setClearingCache(false)
+    }
   }
 
   const filteredAndSortedProducts = () => {
@@ -239,13 +212,44 @@ function App() {
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2 flex items-center justify-center gap-2">
-            <ShoppingCart className="h-8 w-8 text-green-600" />
-            Grocery Price Comparison
-          </h1>
+          <div className="flex items-center justify-center gap-4 mb-4">
+            <h1 className="text-4xl font-bold text-gray-900 flex items-center gap-2">
+              <ShoppingCart className="h-8 w-8 text-green-600" />
+              Grocery Price Comparison
+            </h1>
+            <Button
+              onClick={handleClearCache}
+              disabled={clearingCache}
+              variant="outline"
+              size="sm"
+              className="ml-4"
+              title="Clear cached search results to get fresh data from stores"
+            >
+              {clearingCache ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Clearing...
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Clear Cache
+                </>
+              )}
+            </Button>
+          </div>
           <p className="text-lg text-gray-600">
             Find the best deals across Woolworths, Coles, IGA, and Harris Farm Markets
           </p>
+          {cacheMessage && (
+            <div className={`mt-2 p-2 rounded-md text-sm ${
+              cacheMessage.includes('Failed') 
+                ? 'bg-red-100 text-red-700 border border-red-200' 
+                : 'bg-green-100 text-green-700 border border-green-200'
+            }`}>
+              {cacheMessage}
+            </div>
+          )}
         </div>
 
         {/* Search Section */}
@@ -423,7 +427,7 @@ function App() {
                         </div>
                         
                         {product.unitPrice && (
-                          <p className="text-xs text-gray-500">{product.unitPrice}</p>
+                          <p className="text-xs text-gray-500 unit-price">{product.unitPrice}</p>
                         )}
                       </div>
 
@@ -483,9 +487,19 @@ function App() {
 
         {!loading && products.length === 0 && searchQuery && (
           <div className="text-center py-12">
-            <div className="text-6xl mb-4">🔍</div>
-            <h3 className="text-xl font-semibold text-gray-900 mb-2">No products found</h3>
-            <p className="text-gray-600">Try searching for a different product or check your spelling.</p>
+            {searchError ? (
+              <>
+                <div className="text-6xl mb-4">⚠️</div>
+                <h3 className="text-xl font-semibold text-red-600 mb-2">Search Error</h3>
+                <p className="text-gray-600">{searchError}</p>
+              </>
+            ) : (
+              <>
+                <div className="text-6xl mb-4">🔍</div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">No products found</h3>
+                <p className="text-gray-600">Try searching for a different product or check your spelling.</p>
+              </>
+            )}
           </div>
         )}
 

@@ -17,7 +17,7 @@ class HarrisScraper {
         await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     }
 
-    async searchProducts(query, maxResults = 50) {
+    async searchProducts(query, maxResults = 5) {
         try {
             if (!this.browser) await this.init();
 
@@ -51,6 +51,16 @@ class HarrisScraper {
                     
                     // Try to get unit price
                     let unitPriceText = $product.find('[class*="unit"], [class*="per"]').text().trim();
+                    
+                    // Extract only the numeric unit price
+                    let unitPrice = '';
+                    if (unitPriceText) {
+                        // Match price patterns like $1.50, 1.50, $1.50/kg, $1.50 per kg, etc.
+                        const unitPriceMatch = unitPriceText.match(/\$?(\d+\.?\d*)/);
+                        if (unitPriceMatch) {
+                            unitPrice = unitPriceMatch[1];
+                        }
+                    }
                     
                     const imageUrl = $product.find('img').attr('src');
                     const productUrl = $product.find('a').first().attr('href') || ($product.is('a') ? $product.attr('href') : '');
@@ -120,7 +130,7 @@ class HarrisScraper {
                             discountedPrice: discountedPrice,
                             numericPrice: numericPrice,
                             inStock: inStock,
-                            unitPrice: unitPriceText || '',
+                            unitPrice: unitPrice || '',
                             imageUrl: imageUrl ? (imageUrl.startsWith('http') ? imageUrl : (imageUrl.startsWith('//') ? 'https:' + imageUrl : this.baseUrl + imageUrl)) : '',
                             productUrl: productUrl ? (productUrl.startsWith('http') ? productUrl : this.baseUrl + productUrl) : '',
                             brand: brand,

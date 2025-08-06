@@ -1,7 +1,8 @@
 import requests
 import time
+import sys
 
-def fetch_iga_products(query, limit=30, store_id='32600'):
+def fetch_iga_products(query, limit=100, store_id='32600'):
     """
     Attempt to fetch products from IGA Shop Online API
     
@@ -18,7 +19,6 @@ def fetch_iga_products(query, limit=30, store_id='32600'):
         list: List of product dictionaries (may be empty due to API restrictions)
     """
     base_url = f"https://www.igashop.com.au/api/storefront/stores/{store_id}/search"
-    # base_url = f"https://www.igashop.com.au/api/storefront/stores/{store_id}/search?q=fruits&sort=price&take=100"
     
     # Common headers that might be required
     headers = {
@@ -133,7 +133,15 @@ def use_browser_scraper_alternative(query):
 
 # Usage example
 if __name__ == '__main__':
-    query = 'banana'
+        # Check if query is provided as command line argument
+    if len(sys.argv) > 1:
+        query = sys.argv[1]
+    else:
+        # Fallback to user input if no command line argument
+        query = input("Enter search query: ").strip()
+        if not query:
+            print("No query provided. Exiting.")
+            sys.exit(1)
     print(f"Searching IGA for: '{query}'")
     results = fetch_iga_products(query)
     print(f"Fetched {len(results)} products for query: '{query}'")

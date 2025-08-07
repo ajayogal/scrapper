@@ -1088,34 +1088,33 @@ def search_store_products(store_name):
         # Define search terms for different dietary preferences
         
         if(store_name in ['iga', 'aldi']):
+            max_results = 10
             dietary_search_terms = {
                 'none': [
                     # General groceries - any food items (non-veg and veg)
                     'bread', 'milk', 'eggs', 'chicken', 'beef', 'rice', 'pasta', 'cheese', 'butter',
-                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'salmon', 'tuna',
-                    'flour', 'sugar', 'oil', 'onions', 'potatoes', 'tomatoes', 'bananas', 'apples'
+                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'fruit', 'dairy',
+                    'grocery',
                 ],  
                 'vegetarian': [
-                    'vegetarian protein', 'tofu', 'tempeh', 'vegetarian burgers', 'beans', 'lentils', 'chickpeas',
-                    'quinoa', 'vegetarian pasta', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
-                    'vegetarian cheese', 'plant milk', 'vegetarian sausages', 'falafel', 'hummus'
+                    'vegetarian protein', 'tofu', 'tempeh', 'beans', 'lentils', 'chickpeas',
+                    'quinoa', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
+                    'vegetarian cheese', 'falafel', 'hummus'
                 ],
                 'vegan': [
-                    'vegan protein', 'tofu', 'tempeh', 'vegan burgers', 'vegan cheese', 'plant milk', 'oat milk',
-                    'almond milk', 'soy milk', 'coconut milk', 'vegan butter', 'nutritional yeast', 'vegan yogurt',
-                    'vegan ice cream', 'vegan chocolate', 'agave', 'maple syrup', 'cashew cream'
+                    'vegan protein', 'tofu', 'tempeh', 'vegan cheese', 'milk', 'yeast', 'yogurt', 'agave', 'maple syrup', 'cashew cream'
                 ],
                 'gluten free': [
-                    'gluten free bread', 'gluten free pasta', 'gluten free flour', 'rice flour', 'almond flour',
-                    'gluten free cereal', 'gluten free crackers', 'gluten free pizza', 'quinoa', 'rice cakes',
-                    'gluten free cookies', 'gluten free cake mix', 'corn tortillas', 'rice noodles'
+                    'gluten free', 'rice', 'flour', 'quinoa', 'rice cakes', 'corn tortillas', 'rice noodles'
                 ],
                 'others': [
-                    'organic', 'natural', 'free range', 'grass fed', 'hormone free', 'antibiotic free',
-                    'non gmo', 'fair trade', 'sustainable', 'local', 'artisan', 'raw', 'probiotic'
+                    'bread', 'milk', 'eggs', 'rice', 'pasta', 
+                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'fruit', 'dairy',
+                    'grocery',
                 ]
             }
         else:
+            max_results = 50
             dietary_search_terms = {
                 'none': [
                     'grocery'
@@ -1162,7 +1161,7 @@ def search_store_products(store_name):
             log_and_print(f"Searching {store_name} for: {search_term}")
             
             # Use the existing scraper function with specific store and limit of 50 to get enough results
-            scraper_result = run_node_scraper(search_term, store_name, max_results=50)
+            scraper_result = run_node_scraper(search_term, store_name, max_results)
             
             if 'error' in scraper_result:
                 log_and_print(f"Error searching for {search_term} in {store_name}: {scraper_result['error']}", 'error')
@@ -1208,24 +1207,18 @@ def search_store_products(store_name):
                 if product["numericPrice"] > 0:
                     processed_products.append(product)
             
-            # Sort by price (cheapest first) and take the 10 cheapest
-            processed_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
-            cheapest_10 = processed_products[:10]
-            
-            # Add to all products
-            all_products.extend(cheapest_10)
+            # Add all products to the list (not just 10)
+            all_products.extend(processed_products)
             
             # Track stats for this search term
             search_term_stats.append({
                 'search_term': search_term,
                 'total_found': len(processed_products),
-                'products_returned': len(cheapest_10)
+                'products_returned': len(processed_products)
             })
             
-            log_and_print(f"Found {len(processed_products)} total, returning {len(cheapest_10)} cheapest products for '{search_term}' in {store_name}")
+            log_and_print(f"Found {len(processed_products)} total, returning all {len(processed_products)} products for '{search_term}' in {store_name}")
         
-        # Sort all products by price (cheapest first)
-        all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
         
         return jsonify({
             'success': True,

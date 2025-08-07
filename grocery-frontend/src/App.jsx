@@ -443,10 +443,22 @@ function App() {
                         {product.title}
                       </h3>
 
-                      {/* Store Badge */}
-                      <Badge variant="secondary" className="text-xs">
-                        {product.store}
-                      </Badge>
+                      {/* Store Badge with Logo */}
+                      <div className="flex items-center gap-1">
+                        {product.store_logo && (
+                          <img
+                            src={product.store_logo}
+                            alt={`${product.store} logo`}
+                            className="w-4 h-4 object-contain rounded"
+                            onError={(e) => {
+                              e.target.style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <Badge variant="secondary" className="text-xs">
+                          {product.store}
+                        </Badge>
+                      </div>
 
                       {/* Brand and Category */}
                       {(product.brand || product.category) && (

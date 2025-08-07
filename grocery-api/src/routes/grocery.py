@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
 import subprocess
 import json
@@ -28,6 +28,48 @@ grocery_bp = Blueprint('grocery', __name__)
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def get_store_logo_url(store_name, api_base_url=None):
+    """
+    Map store names to their logo URLs using the API endpoint
+    Args:
+        store_name (str): The name of the store
+        api_base_url (str): Base URL for the API (optional, will auto-detect if not provided)
+    Returns:
+        str: URL to the store logo via API endpoint
+    """
+    # Normalize store name to lowercase for consistent mapping
+    store_normalized = store_name.lower().strip()
+    
+    # Map store names to logo filenames
+    logo_mapping = {
+        'aldi': 'aldi.png',
+        'coles': 'coles.png', 
+        'woolworths': 'woolworths.png',
+        'iga': 'iga.png',
+        'harris': 'harris.png'
+    }
+    
+    # Get logo filename, default to default-store.png if not found
+    logo_filename = logo_mapping.get(store_normalized, 'default-store.png')
+    
+    # Use provided base URL or construct default API URL
+    if api_base_url is None:
+        # Try to get from request context if available
+        try:
+            from flask import request
+            if request:
+                # Construct API URL from current request
+                api_base_url = f"{request.scheme}://{request.host}/api/grocery"
+            else:
+                # Fallback to localhost for development
+                api_base_url = "http://localhost:5002/api/grocery"
+        except:
+            # Fallback to localhost for development
+            api_base_url = "http://localhost:5002/api/grocery"
+    
+    # Return API endpoint URL for the logo
+    return f"{api_base_url}/logos/{logo_filename}"
 
 def log_and_print(message, level='info'):
     """Print message to console and log it with proper flushing"""
@@ -189,7 +231,14 @@ def search_products():
         if not query:
             return jsonify({'error': 'Query cannot be empty'}), 400
         
-        store = data.get('store', 'all')
+        store = data.get('store', 'all').lower()
+        # Validate store parameter
+        valid_stores = ['all', 'aldi', 'iga', 'woolworths', 'coles', 'harris']
+        if store not in valid_stores:
+            return jsonify({
+                'error': f'Invalid store "{store}". Supported stores: {", ".join(valid_stores)}'
+            }), 400
+        
         page = data.get('page', 1)
         per_page = data.get('perPage', 10)
         
@@ -231,30 +280,27 @@ def search_products():
             all_products = []
             for p in raw_products:
                 # Map existing fields and add missing ones
+                store_name = p.get("store", store)
                 product = {
                     "title": p.get("title", "N/A"),
-                    "store": store,  # Add the store from the request
-                    "price": f"${p['original_price']:.2f}" if p.get("original_price") is not None else f"${p.get('current_price', 0):.2f}",
-                    "discountedPrice": f"${p['current_price']:.2f}" if p.get("discount_amount") is not None or p.get("discount_percentage") is not None else "",
-                    "discount": "",
-                    "numericPrice": p.get("current_price", 0),
-                    "inStock": True,  # Assuming products returned are in stock
-                    "unitPrice": p.get("per_unit_price", ""),
-                    "imageUrl": p.get("image_url", ""),
+                    "store": store_name,  # Use the actual store from scraped product, fallback to request store
+                    "store_logo": get_store_logo_url(store_name),  # Add store logo URL
+                    "price": p.get("price", f"${p.get('numericPrice', 0):.2f}"),
+                    "discountedPrice": p.get("discountedPrice", ""),
+                    "discount": p.get("discount", ""),
+                    "numericPrice": p.get("numericPrice", 0),
+                    "inStock": p.get("inStock", True),  # Use actual inStock value from scraper
+                    "unitPrice": p.get("unitPrice", ""),
+                    "imageUrl": p.get("imageUrl", ""),
                     "brand": p.get("brand", ""),
                     "category": p.get("category", ""),
-                    "productUrl": p.get("product_url", ""),
+                    "productUrl": p.get("productUrl", ""),
                     "scraped_at": p.get("scraped_at", "")
                 }
 
-                # Calculate discount string
-                if p.get("discount_amount") is not None:
-                    product["discount"] = f"Save ${p['discount_amount']:.2f}"
-                elif p.get("discount_percentage") is not None:
-                    product["discount"] = f"{p['discount_percentage']}% Off"
-                elif p.get("original_price") is not None and p.get("current_price") is not None and p["original_price"] > p["current_price"]:
-                    savings = p["original_price"] - p["current_price"]
-                    product["discount"] = f"Save ${savings:.2f}"
+                # Use discount field from scraper if not already set
+                if not product["discount"] and p.get("discount"):
+                    product["discount"] = p.get("discount")
 
                 all_products.append(product)
             
@@ -414,6 +460,9 @@ def search_all_stores(search_keys, max_results_per_store=50, selected_stores=Non
         key = f"{product.get('title', '').lower()}_{product.get('store', '').lower()}"
         if key not in seen:
             seen.add(key)
+            # Add store logo if not already present
+            if 'store_logo' not in product and 'store' in product:
+                product['store_logo'] = get_store_logo_url(product['store'])
             unique_products.append(product)
     
     # Sort by price (cheapest first)
@@ -1019,4 +1068,41 @@ def auto_generated_list_more():
             'error': 'Internal server error', 
             'details': str(e)
         }), 500
+
+@grocery_bp.route('/logos/<logo_name>', methods=['GET'])
+@cross_origin()
+def serve_logo(logo_name):
+    """Serve store logo images"""
+    try:
+        # Get the path to the local logos directory within grocery-api
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        logos_path = os.path.join(current_dir, '..', '..', 'logos')
+        logo_file_path = os.path.join(logos_path, logo_name)
+        
+        # Check if file exists and is a valid image file
+        if not os.path.exists(logo_file_path):
+            # Return default store logo if specific logo not found
+            default_logo_path = os.path.join(logos_path, 'default-store.png')
+            if os.path.exists(default_logo_path):
+                return send_file(default_logo_path, mimetype='image/png')
+            else:
+                return jsonify({'error': 'Logo not found'}), 404
+        
+        # Determine MIME type based on file extension
+        _, ext = os.path.splitext(logo_name.lower())
+        mime_types = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.svg': 'image/svg+xml'
+        }
+        
+        mimetype = mime_types.get(ext, 'image/png')
+        
+        return send_file(logo_file_path, mimetype=mimetype)
+        
+    except Exception as e:
+        log_and_print(f"Error serving logo {logo_name}: {e}", 'error')
+        return jsonify({'error': 'Internal server error'}), 500
 

@@ -462,9 +462,21 @@ const ShoppingListGenerator = () => {
                             )}
                           </div>
                           <div className="flex items-center gap-2 mt-1">
-                            <Badge variant="outline" className="text-xs">
-                              {item.store}
-                            </Badge>
+                            <div className="flex items-center gap-1">
+                              {item.store_logo && (
+                                <img
+                                  src={item.store_logo}
+                                  alt={`${item.store} logo`}
+                                  className="w-4 h-4 object-contain rounded"
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <Badge variant="outline" className="text-xs">
+                                {item.store}
+                              </Badge>
+                            </div>
                             <span className="text-sm font-semibold text-green-600">
                               {item.price}
                             </span>

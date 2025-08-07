@@ -12,7 +12,7 @@ app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'sta
 app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
 
 # Enable CORS for all routes
-CORS(app, origins=['http://localhost:5173', 'http://127.0.0.1:5173','http://localhost:5170', 'http://127.0.0.1:5170'])
+CORS(app, origins=['http://localhost:5173', 'http://127.0.0.1:5173','http://localhost:5170', 'http://127.0.0.1:5170','http://localhost:3333'])
 
 app.register_blueprint(grocery_bp, url_prefix='/api/grocery')
 app.register_blueprint(merger_bp, url_prefix='/api/merger')

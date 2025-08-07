@@ -7,8 +7,8 @@ const AldiScraper = require('./scrapers/aldi');
 class GroceryScraper {
     constructor() {
         this.scrapers = {
-            woolworths: new WoolworthsScraper(),
-            coles: new ColesScraper(),
+            // woolworths: new WoolworthsScraper(),
+            // coles: new ColesScraper(),
             iga: new IGAScraper(),
             harris: new HarrisScraper(),
             aldi: new AldiScraper()

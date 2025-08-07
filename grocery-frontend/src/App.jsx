@@ -63,17 +63,22 @@ function App() {
       const data = await response.json()
       
       if (data.success) {
+        console.log("API response data:", data);
         if (resetProducts) {
-          setProducts(data.products)
-          setCurrentPage(1)
+          setProducts(data.products);
+          setCurrentPage(1);
         } else {
-          setProducts(prev => [...prev, ...data.products])
-          setCurrentPage(prev => prev + 1)
+          setProducts(prev => {
+            const newProducts = [...prev, ...data.products];
+            console.log("Products after load more:", newProducts);
+            return newProducts;
+          });
+          setCurrentPage(prev => prev + 1);
         }
-        setHasMore(data.hasMore)
-        setTotalResults(data.totalResults)
+        setHasMore(data.hasMore);
+        setTotalResults(data.totalResults);
       } else {
-        throw new Error(data.error || 'Search failed')
+        throw new Error(data.error || 'Search failed');
       }
     } catch (error) {
       console.error('Search failed:', error)
@@ -136,8 +141,8 @@ function App() {
 
     // Filter by store
     if (selectedStore !== 'all') {
-      filtered = filtered.filter(product => 
-        product.store.toLowerCase().includes(selectedStore.toLowerCase())
+      filtered = filtered.filter(product =>
+        (product.store || '').toLowerCase().includes(selectedStore.toLowerCase())
       )
     }
 
@@ -179,7 +184,7 @@ function App() {
             // If discounted price exists, calculate percentage discount
             if (product.discountedPrice && product.price) {
               const originalPrice = parseFloat(product.price.replace(/[^0-9.]/g, ''))
-              const discountedPrice = parseFloat(product.discountedPrice.replace(/[^0-9.]/g, ''))
+              const discountedPrice = parseFloat((product.discountedPrice || '').replace(/[^0-9.]/g, ''))
               if (originalPrice > 0 && discountedPrice > 0) {
                 return ((originalPrice - discountedPrice) / originalPrice) * 100
               }

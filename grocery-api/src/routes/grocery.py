@@ -222,11 +222,41 @@ def search_products():
             
             # Extract products from scraper result
             if 'products' in scraper_result:
-                all_products = scraper_result['products']
+                raw_products = scraper_result['products']
             elif isinstance(scraper_result, list):
-                all_products = scraper_result
+                raw_products = scraper_result
             else:
-                all_products = []
+                raw_products = []
+
+            all_products = []
+            for p in raw_products:
+                # Map existing fields and add missing ones
+                product = {
+                    "title": p.get("title", "N/A"),
+                    "store": store,  # Add the store from the request
+                    "price": f"${p['original_price']:.2f}" if p.get("original_price") is not None else f"${p.get('current_price', 0):.2f}",
+                    "discountedPrice": f"${p['current_price']:.2f}" if p.get("discount_amount") is not None or p.get("discount_percentage") is not None else "",
+                    "discount": "",
+                    "numericPrice": p.get("current_price", 0),
+                    "inStock": True,  # Assuming products returned are in stock
+                    "unitPrice": p.get("per_unit_price", ""),
+                    "imageUrl": p.get("image_url", ""),
+                    "brand": p.get("brand", ""),
+                    "category": p.get("category", ""),
+                    "productUrl": p.get("product_url", ""),
+                    "scraped_at": p.get("scraped_at", "")
+                }
+
+                # Calculate discount string
+                if p.get("discount_amount") is not None:
+                    product["discount"] = f"Save ${p['discount_amount']:.2f}"
+                elif p.get("discount_percentage") is not None:
+                    product["discount"] = f"{p['discount_percentage']}% Off"
+                elif p.get("original_price") is not None and p.get("current_price") is not None and p["original_price"] > p["current_price"]:
+                    savings = p["original_price"] - p["current_price"]
+                    product["discount"] = f"Save ${savings:.2f}"
+
+                all_products.append(product)
             
             # Sort by price (cheapest first)
             all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))

@@ -47,6 +47,79 @@ class HarrisScraper {
         });
     }
 
+    parseComplexPrice(priceString) {
+        // Handle complex price strings like "Save $2.00 $8.99 ea $17.98 / kg"
+        const result = {
+            mainPrice: '',
+            unitPrice: '',
+            discount: '',
+            originalPrice: ''
+        };
+
+        if (!priceString) return result;
+
+        // Clean up the string
+        const cleanPrice = priceString.replace(/\s+/g, ' ').trim();
+
+        // Extract discount information (Save $X.XX or $X.XX off, etc.)
+        const discountMatch = cleanPrice.match(/(?:save|off|discount)\s*\$?(\d+\.?\d*)/i);
+        if (discountMatch) {
+            result.discount = `$${discountMatch[1]}`;
+        }
+
+        // Extract all price patterns from the string
+        const priceMatches = cleanPrice.match(/\$\d+\.?\d*/g) || [];
+        
+        if (priceMatches.length === 0) return result;
+
+        // Strategy 1: If there's a discount mentioned, structure is usually:
+        // "Save $X.XX $Y.YY ea $Z.ZZ / kg" where Y.YY is current price, Z.ZZ is unit price
+        if (result.discount && priceMatches.length >= 2) {
+            // Skip the discount amount (first price) and use the second as main price
+            result.mainPrice = priceMatches[1];
+            
+            // Look for unit price pattern in the remaining string
+            const afterMainPrice = cleanPrice.substring(cleanPrice.indexOf(result.mainPrice) + result.mainPrice.length);
+            const unitPriceMatch = afterMainPrice.match(/\$(\d+\.?\d*)\s*\/?\s*(kg|g|each|ea|per|l|ml)/i);
+            if (unitPriceMatch) {
+                result.unitPrice = `$${unitPriceMatch[1]} / ${unitPriceMatch[2]}`;
+            }
+            
+            // Calculate original price if we have discount
+            const discountNum = parseFloat(result.discount.replace('$', ''));
+            const currentNum = parseFloat(result.mainPrice.replace('$', ''));
+            if (!isNaN(discountNum) && !isNaN(currentNum)) {
+                result.originalPrice = `$${(currentNum + discountNum).toFixed(2)}`;
+            }
+        }
+        // Strategy 2: Look for "ea" or "each" to identify main price vs unit price
+        else if (cleanPrice.includes('ea') || cleanPrice.includes('each')) {
+            // Find price that comes before "ea" or "each"
+            const eachMatch = cleanPrice.match(/\$(\d+\.?\d*)\s*(?:ea|each)/i);
+            if (eachMatch) {
+                result.mainPrice = `$${eachMatch[1]}`;
+                
+                // Look for unit price (per kg, per g, etc.)
+                const unitMatch = cleanPrice.match(/\$(\d+\.?\d*)\s*\/?\s*(kg|g|per|l|ml)/i);
+                if (unitMatch && unitMatch[0] !== result.mainPrice) {
+                    result.unitPrice = `$${unitMatch[1]} / ${unitMatch[2]}`;
+                }
+            }
+        }
+        // Strategy 3: Default - first price is main, look for unit price pattern
+        else {
+            result.mainPrice = priceMatches[0];
+            
+            // Look for unit price pattern
+            const unitPriceMatch = cleanPrice.match(/\$(\d+\.?\d*)\s*\/?\s*(kg|g|each|ea|per|l|ml)/i);
+            if (unitPriceMatch && unitPriceMatch[0] !== result.mainPrice) {
+                result.unitPrice = `$${unitPriceMatch[1]} / ${unitPriceMatch[2]}`;
+            }
+        }
+
+        return result;
+    }
+
     async searchProducts(query, maxResults = 5) {
         try {
             if (!this.browser) await this.init();
@@ -189,28 +262,50 @@ class HarrisScraper {
                         }
                     }
                     
-                    // Find price within this container
+                    // Find price within this container - enhanced parsing
                     let priceText = '';
+                    let unitPriceText = '';
+                    let discountAmount = '';
+                    
                     const priceElements = $container.find('[class*="price"]');
                     if (priceElements.length > 0) {
-                        // Look for the main price (not unit price)
                         priceElements.each((i, priceEl) => {
-                            const price = $(priceEl).text().trim();
-                            // Look for dollar amounts that look like main prices
-                            if (price.match(/\$\d+\.?\d*/)) {
-                                priceText = price;
+                            const fullPriceText = $(priceEl).text().trim();
+                            
+                            // Parse complex price strings like "Save $2.00 $8.99 ea $17.98 / kg"
+                            const parsedPrice = this.parseComplexPrice(fullPriceText);
+                            
+                            if (parsedPrice.mainPrice) {
+                                priceText = parsedPrice.mainPrice;
+                                if (parsedPrice.unitPrice) unitPriceText = parsedPrice.unitPrice;
+                                if (parsedPrice.discount) discountAmount = parsedPrice.discount;
                                 return false; // Break the loop
+                            }
+                            
+                            // Fallback to simple price matching
+                            if (fullPriceText.match(/\$\d+\.?\d*/)) {
+                                priceText = fullPriceText;
+                                return false;
                             }
                         });
                     }
                     
-                    // Try to get unit price
-                    let unitPriceText = $container.find('[class*="unit"], [class*="per"]').text().trim();
+                    // Try to get unit price from separate elements if not found in main price
+                    if (!unitPriceText) {
+                        const unitPriceElements = $container.find('[class*="unit"], [class*="per"], [class*="kg"], [class*="each"]');
+                        unitPriceElements.each((i, unitEl) => {
+                            const unitText = $(unitEl).text().trim();
+                            const unitMatch = unitText.match(/\$?(\d+\.?\d*)\s*(?:\/\s*)?(kg|g|each|ea|per)/i);
+                            if (unitMatch) {
+                                unitPriceText = `$${unitMatch[1]} / ${unitMatch[2]}`;
+                                return false;
+                            }
+                        });
+                    }
                     
-                    // Extract only the numeric unit price
+                    // Extract only the numeric unit price for sorting/comparison
                     let unitPrice = '';
                     if (unitPriceText) {
-                        // Match price patterns like $1.50, 1.50, $1.50/kg, $1.50 per kg, etc.
                         const unitPriceMatch = unitPriceText.match(/\$?(\d+\.?\d*)/);
                         if (unitPriceMatch) {
                             unitPrice = unitPriceMatch[1];
@@ -235,20 +330,29 @@ class HarrisScraper {
                         }
                         seenProducts.add(productId);
                         
-                        // Extract discount information
-                        let discount = '';
+                        // Extract discount information - use parsed data if available
+                        let discount = discountAmount || '';
                         let discountedPrice = '';
                         let originalPrice = priceText;
                         
-                        // Look for discount indicators
-                        const discountElement = $container.find('[class*="discount"], [class*="save"], [class*="was"]');
-                        if (discountElement.length > 0) {
-                            discount = discountElement.text().trim();
-                            // Try to find original price
-                            const wasPrice = $container.find('[class*="was"], [class*="original"]').text().trim();
-                            if (wasPrice) {
-                                originalPrice = wasPrice;
+                        // If we parsed discount info from the price string, use it
+                        if (discountAmount) {
+                            const parsedPrice = this.parseComplexPrice(priceText);
+                            if (parsedPrice.originalPrice) {
+                                originalPrice = parsedPrice.originalPrice;
                                 discountedPrice = priceText;
+                            }
+                        } else {
+                            // Fallback to looking for discount indicators in separate elements
+                            const discountElement = $container.find('[class*="discount"], [class*="save"], [class*="was"]');
+                            if (discountElement.length > 0) {
+                                discount = discountElement.text().trim();
+                                // Try to find original price
+                                const wasPrice = $container.find('[class*="was"], [class*="original"]').text().trim();
+                                if (wasPrice) {
+                                    originalPrice = wasPrice;
+                                    discountedPrice = priceText;
+                                }
                             }
                         }
                         
@@ -291,6 +395,7 @@ class HarrisScraper {
                             numericPrice: numericPrice,
                             inStock: inStock,
                             unitPrice: unitPrice || '',
+                            unitPriceText: unitPriceText || '',
                             imageUrl: imageUrl ? (imageUrl.startsWith('http') ? imageUrl : (imageUrl.startsWith('//') ? 'https:' + imageUrl : this.baseUrl + imageUrl)) : '',
                             productUrl: productUrl ? (productUrl.startsWith('http') ? productUrl : this.baseUrl + productUrl) : '',
                             brand: brand,

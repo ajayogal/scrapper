@@ -1,0 +1,65 @@
+{
+  "extraction_info": {
+    "timestamp": "2025-08-05T17:34:41.855Z",
+    "page_url": "https://www.coles.com.au/on-special/back-to-school/easy-school-night-dinners",
+    "category": "specials",
+    "page_number": 1,
+    "selector_set_used": "high_confidence",
+    "total_products": 2,
+    "total_elements_found": 2
+  },
+  "products": [
+    {
+      "title": "Birds Eye Frozen Fish Fillets With Original Lightly Battered Oven Bake  ... 425g",
+      "current_price": 6,
+      "original_price": null,
+      "discount_percentage": null,
+      "discount_amount": null,
+      "image_url": "https://www.coles.com.au/_next/image?url=https%3A%2F%2Fcdn.productimages.coles.com.au%2Fproductimages%2F8%2F84430.jpg&w=640&q=90",
+      "product_url": "https://www.coles.com.au/product/birds-eye-frozen-fish-fillets-with-original-lightly-battered-oven-bake-6-pack-425g-84430",
+      "category": "specials",
+      "brand": null,
+      "weight_size": null,
+      "per_unit_price": "$14.12 per 1kg | Was $12.00",
+      "rating": 0,
+      "review_count": 0,
+      "in_stock": true,
+      "is_on_sale": false,
+      "scraped_at": "2025-08-05T17:34:41.855Z",
+      "page_number": 1,
+      "source_url": "https://www.coles.com.au/on-special/back-to-school/easy-school-night-dinners",
+      "is_sponsored": null
+    },
+    {
+      "title": "Birds Eye Frozen Fish Fillets With Lemon Pepper Crumb Oven Bake 6 Pack | 425g",
+      "current_price": 6,
+      "original_price": null,
+      "discount_percentage": null,
+      "discount_amount": null,
+      "image_url": "https://www.coles.com.au/_next/image?url=https%3A%2F%2Fcdn.productimages.coles.com.au%2Fproductimages%2F4%2F4896121.jpg&w=640&q=90",
+      "product_url": "https://www.coles.com.au/product/birds-eye-frozen-fish-fillets-with-lemon-pepper-crumb-oven-bake-6-pack-425g-4896121",
+      "category": "specials",
+      "brand": null,
+      "weight_size": null,
+      "per_unit_price": "$14.12 per 1kg | Was $12.00",
+      "rating": 0,
+      "review_count": 0,
+      "in_stock": true,
+      "is_on_sale": false,
+      "scraped_at": "2025-08-05T17:34:41.855Z",
+      "page_number": 1,
+      "source_url": "https://www.coles.com.au/on-special/back-to-school/easy-school-night-dinners",
+      "is_sponsored": null
+    }
+  ],
+  "summary": {
+    "total_products": 2,
+    "products_on_sale": 0,
+    "products_with_ratings": 2,
+    "average_price": 6,
+    "price_range": {
+      "min": 6,
+      "max": 6
+    }
+  }
+}

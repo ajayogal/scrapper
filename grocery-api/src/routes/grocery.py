@@ -306,79 +306,286 @@ def clear_cache():
         'cache_entries': len(search_cache)
     })
 
-    """Mock search endpoint for testing with pagination"""
-    data = request.get_json()
-    query = data.get('query', '')
-    page = data.get('page', 1)
-    per_page = data.get('perPage', 10)
+def search_all_stores(search_keys, max_results_per_store=50):
+    """Search all available stores for the given search keys"""
+    stores = ['all']  # This will use both Python and Node.js scrapers
+    all_products = []
     
-    # Generate more mock data to ensure we have at least 10+ products
-    stores = ["Woolworths", "Coles", "IGA", "Harris Farm Markets", "Aldi"]
-    brands = ["Brand A", "Brand B", "Premium", "Organic", "Home Brand", "Select", "Fresh"]
-    categories = ["Dairy", "Bakery", "Meat", "Produce", "Pantry", "Frozen", "Organic"]
+    for search_key in search_keys:
+        log_and_print(f"Searching all stores for: {search_key}")
+        
+        # Use Python scrapers (ALDI and IGA)
+        if PYTHON_SCRAPERS_AVAILABLE:
+            python_result = run_python_scrapers(search_key, 'all', max_results_per_store)
+            if 'products' in python_result:
+                all_products.extend(python_result['products'])
+        
+        # Use Node.js scrapers (Woolworths, Coles, Harris Farm, etc.)
+        node_result = run_node_scraper(search_key, 'all', max_results_per_store)
+        if 'products' in node_result:
+            all_products.extend(node_result['products'])
+        elif isinstance(node_result, list):
+            all_products.extend(node_result)
     
-    all_mock_products = []
-    
-    # Generate 25 products to simulate a good dataset
-    for i in range(25):
-        store = stores[i % len(stores)]
-        brand = brands[i % len(brands)]
-        category = categories[i % len(categories)]
-        
-        # Vary prices and discounts
-        base_price = 2.50 + (i * 0.30)
-        has_discount = i % 3 == 0  # Every 3rd product has discount
-        discount_amount = 0.20 + (i * 0.05) if has_discount else 0
-        final_price = base_price - discount_amount if has_discount else base_price
-        
-        # Vary stock status
-        in_stock = i % 8 != 0  # Every 8th product is out of stock
-        
-        # Store-specific colors for placeholders
-        store_colors = {
-            "Woolworths": "4CAF50",
-            "Coles": "E53E3E", 
-            "IGA": "FF9800",
-            "Harris Farm Markets": "2196F3"
-        }
-        
-        product = {
-            "title": f"{brand} {query.title()} {i+1}",
-            "store": store,
-            "price": f"${base_price:.2f}",
-            "discountedPrice": f"${final_price:.2f}" if has_discount else "",
-            "discount": f"Save ${discount_amount:.2f}" if has_discount else "",
-            "numericPrice": final_price,
-            "inStock": in_stock,
-            "unitPrice": f"${(final_price/2):.2f}/unit",
-            "imageUrl": f"https://via.placeholder.com/150x150/{store_colors[store]}/white?text={store[0]}",
-            "brand": brand,
-            "category": category,
-            "productUrl": f"https://example.com/{store.lower().replace(' ', '')}/product/{i+1}",
-            "scraped_at": "2025-07-31T12:30:00Z"
-        }
-        all_mock_products.append(product)
+    # Remove duplicates based on title and store
+    seen = set()
+    unique_products = []
+    for product in all_products:
+        key = f"{product.get('title', '').lower()}_{product.get('store', '').lower()}"
+        if key not in seen:
+            seen.add(key)
+            unique_products.append(product)
     
     # Sort by price (cheapest first)
-    all_mock_products.sort(key=lambda x: x['numericPrice'])
+    unique_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
     
-    # Calculate pagination
-    start_idx = (page - 1) * per_page
-    end_idx = start_idx + per_page
-    paginated_products = all_mock_products[start_idx:end_idx]
+    return unique_products
+
+def generate_shopping_lists(products, budget, num_lists=4):
+    """Generate 4 different shopping lists within the budget constraint"""
+    lists = []
     
-    total_products = len(all_mock_products)
-    has_more = end_idx < total_products
-    
-    return jsonify({
-        'success': True,
-        'query': query,
-        'store': 'all',
-        'page': page,
-        'perPage': per_page,
-        'totalResults': total_products,
-        'currentPageResults': len(paginated_products),
-        'hasMore': has_more,
-        'products': paginated_products
+    # Strategy 1: Cheapest items first (maximize quantity)
+    cheapest_list = generate_cheapest_list(products, budget)
+    lists.append({
+        'strategy': 'cheapest_first',
+        'description': 'Maximum quantity - focuses on the cheapest items',
+        'items': cheapest_list['items'],
+        'total_cost': cheapest_list['total_cost'],
+        'items_count': len(cheapest_list['items']),
+        'remaining_budget': budget - cheapest_list['total_cost']
     })
+    
+    # Strategy 2: Balanced variety (one item per store if possible)
+    variety_list = generate_variety_list(products, budget)
+    lists.append({
+        'strategy': 'store_variety',
+        'description': 'Store variety - tries to include items from different stores',
+        'items': variety_list['items'],
+        'total_cost': variety_list['total_cost'],
+        'items_count': len(variety_list['items']),
+        'remaining_budget': budget - variety_list['total_cost']
+    })
+    
+    # Strategy 3: Best value (considers discounts and unit prices)
+    value_list = generate_value_list(products, budget)
+    lists.append({
+        'strategy': 'best_value',
+        'description': 'Best value - prioritizes discounted items and good unit prices',
+        'items': value_list['items'],
+        'total_cost': value_list['total_cost'],
+        'items_count': len(value_list['items']),
+        'remaining_budget': budget - value_list['total_cost']
+    })
+    
+    # Strategy 4: Balanced approach (mix of cheap and quality)
+    balanced_list = generate_balanced_list(products, budget)
+    lists.append({
+        'strategy': 'balanced',
+        'description': 'Balanced approach - mix of affordable and quality items',
+        'items': balanced_list['items'],
+        'total_cost': balanced_list['total_cost'],
+        'items_count': len(balanced_list['items']),
+        'remaining_budget': budget - balanced_list['total_cost']
+    })
+    
+    return lists
+
+def generate_cheapest_list(products, budget):
+    """Generate a list focusing on the cheapest items"""
+    items = []
+    total_cost = 0.0
+    
+    for product in products:
+        price = product.get('numericPrice', float('inf'))
+        if price != float('inf') and total_cost + price <= budget:
+            items.append(product)
+            total_cost += price
+    
+    return {'items': items, 'total_cost': total_cost}
+
+def generate_variety_list(products, budget):
+    """Generate a list with variety across different stores"""
+    items = []
+    total_cost = 0.0
+    stores_used = set()
+    
+    # First pass: one item per store
+    for product in products:
+        price = product.get('numericPrice', float('inf'))
+        store = product.get('store', '').lower()
+        
+        if (price != float('inf') and 
+            total_cost + price <= budget and 
+            store not in stores_used):
+            items.append(product)
+            total_cost += price
+            stores_used.add(store)
+    
+    # Second pass: fill remaining budget with cheapest items
+    for product in products:
+        price = product.get('numericPrice', float('inf'))
+        
+        if (price != float('inf') and 
+            total_cost + price <= budget and 
+            product not in items):
+            items.append(product)
+            total_cost += price
+    
+    return {'items': items, 'total_cost': total_cost}
+
+def generate_value_list(products, budget):
+    """Generate a list prioritizing discounted items and good value"""
+    items = []
+    total_cost = 0.0
+    
+    # Sort by discount availability and price
+    discounted_products = []
+    regular_products = []
+    
+    for product in products:
+        if product.get('discountedPrice') or product.get('discount'):
+            discounted_products.append(product)
+        else:
+            regular_products.append(product)
+    
+    # Prioritize discounted items
+    all_sorted = discounted_products + regular_products
+    
+    for product in all_sorted:
+        price = product.get('numericPrice', float('inf'))
+        if price != float('inf') and total_cost + price <= budget:
+            items.append(product)
+            total_cost += price
+    
+    return {'items': items, 'total_cost': total_cost}
+
+def generate_balanced_list(products, budget):
+    """Generate a balanced list mixing affordable and mid-range items"""
+    items = []
+    total_cost = 0.0
+    
+    # Categorize products by price range
+    valid_products = [p for p in products if p.get('numericPrice', float('inf')) != float('inf')]
+    if not valid_products:
+        return {'items': items, 'total_cost': total_cost}
+    
+    prices = [p['numericPrice'] for p in valid_products]
+    avg_price = sum(prices) / len(prices)
+    
+    cheap_products = [p for p in valid_products if p['numericPrice'] <= avg_price * 0.7]
+    mid_products = [p for p in valid_products if avg_price * 0.7 < p['numericPrice'] <= avg_price * 1.3]
+    
+    # Alternate between cheap and mid-range items
+    cheap_idx = 0
+    mid_idx = 0
+    use_cheap = True
+    
+    while total_cost < budget:
+        if use_cheap and cheap_idx < len(cheap_products):
+            product = cheap_products[cheap_idx]
+            cheap_idx += 1
+        elif mid_idx < len(mid_products):
+            product = mid_products[mid_idx]
+            mid_idx += 1
+        elif cheap_idx < len(cheap_products):
+            product = cheap_products[cheap_idx]
+            cheap_idx += 1
+        else:
+            break
+        
+        price = product.get('numericPrice', float('inf'))
+        if total_cost + price <= budget:
+            items.append(product)
+            total_cost += price
+        
+        use_cheap = not use_cheap
+    
+    return {'items': items, 'total_cost': total_cost}
+
+@grocery_bp.route('/auto-generated-list', methods=['POST'])
+@cross_origin()
+def auto_generated_list():
+    """Generate 4 optimized shopping lists within budget based on search keys"""
+    try:
+        data = request.get_json()
+        
+        # Validate required parameters
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        search_keys = data.get('search_keys', [])
+        budget = data.get('budget')
+        
+        if not search_keys:
+            return jsonify({'error': 'search_keys parameter is required and must be a non-empty array'}), 400
+        
+        if not isinstance(search_keys, list):
+            return jsonify({'error': 'search_keys must be an array of strings'}), 400
+        
+        if budget is None:
+            return jsonify({'error': 'budget parameter is required'}), 400
+        
+        try:
+            budget = float(budget)
+            if budget <= 0:
+                return jsonify({'error': 'budget must be a positive number'}), 400
+        except (ValueError, TypeError):
+            return jsonify({'error': 'budget must be a valid number'}), 400
+        
+        # Optional parameters
+        max_results_per_store = data.get('max_results_per_store', 50)
+        
+        log_and_print(f"Generating auto shopping lists for search keys: {search_keys}, budget: ${budget}")
+        
+        # Search all stores for all search keys
+        all_products = search_all_stores(search_keys, max_results_per_store)
+        
+        if not all_products:
+            return jsonify({
+                'success': True,
+                'message': 'No products found for the given search keys',
+                'search_keys': search_keys,
+                'budget': budget,
+                'lists': []
+            })
+        
+        # Filter products within individual budget (optional safety check)
+        affordable_products = [p for p in all_products 
+                             if p.get('numericPrice', float('inf')) <= budget]
+        
+        if not affordable_products:
+            return jsonify({
+        'success': True,
+                'message': 'No individual products found within the specified budget',
+                'search_keys': search_keys,
+                'budget': budget,
+                'total_products_found': len(all_products),
+                'cheapest_product_price': min([p.get('numericPrice', float('inf')) for p in all_products]),
+                'lists': []
+            })
+        
+        # Generate 4 different shopping lists
+        shopping_lists = generate_shopping_lists(affordable_products, budget)
+        
+        # Add metadata to response
+        response = {
+            'success': True,
+            'search_keys': search_keys,
+            'budget': budget,
+            'total_products_found': len(all_products),
+            'affordable_products_count': len(affordable_products),
+            'lists_generated': len(shopping_lists),
+            'lists': shopping_lists,
+            'generated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        }
+        
+        return jsonify(response)
+        
+    except Exception as e:
+        log_and_print(f"Error in auto_generated_list: {e}", 'error')
+        return jsonify({
+            'error': 'Internal server error', 
+            'details': str(e)
+        }), 500
 

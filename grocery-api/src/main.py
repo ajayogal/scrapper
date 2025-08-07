@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS
 from src.routes.grocery import grocery_bp
+from src.routes.merger import merger_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
@@ -14,7 +15,7 @@ app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
 CORS(app, origins=['http://localhost:5173', 'http://127.0.0.1:5173','http://localhost:5170', 'http://127.0.0.1:5170'])
 
 app.register_blueprint(grocery_bp, url_prefix='/api/grocery')
-
+app.register_blueprint(merger_bp, url_prefix='/api/merger')
 
 
 @app.route('/')

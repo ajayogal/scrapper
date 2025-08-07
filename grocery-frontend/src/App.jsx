@@ -4,8 +4,11 @@ import { Input } from '@/components/ui/input.jsx'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
-import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus, Trash2, RefreshCw } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
+import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus, Trash2, RefreshCw, DollarSign, Package, TrendingUp, Merge } from 'lucide-react'
 import './App.css'
+import Merger from '@/components/Merger.jsx'
+import ShoppingListGenerator from '@/components/ShoppingListGenerator.jsx'
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -22,6 +25,8 @@ function App() {
   const [clearingCache, setClearingCache] = useState(false)
   const [cacheMessage, setCacheMessage] = useState('')
   const [searchError, setSearchError] = useState('')
+
+  const [activeTab, setActiveTab] = useState('search')
 
 
 
@@ -123,6 +128,8 @@ function App() {
       setClearingCache(false)
     }
   }
+
+
 
   const filteredAndSortedProducts = () => {
     let filtered = products
@@ -252,17 +259,35 @@ function App() {
           )}
         </div>
 
-        {/* Search Section */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5" />
-              Search Products
-            </CardTitle>
-            <CardDescription>
-              Enter a product name to compare prices across all stores
-            </CardDescription>
-          </CardHeader>
+        {/* Main Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="search" className="flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              Product Search
+            </TabsTrigger>
+            <TabsTrigger value="lists" className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Shopping Lists
+            </TabsTrigger>
+            <TabsTrigger value="merger" className="flex items-center gap-2">
+              <Merge className="h-4 w-4" />
+              Merger
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="search">
+            {/* Search Section */}
+            <Card className="mb-8">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Search className="h-5 w-5" />
+                  Search Products
+                </CardTitle>
+                <CardDescription>
+                  Enter a product name to compare prices across all stores
+                </CardDescription>
+              </CardHeader>
           <CardContent>
             <div className="flex gap-4 mb-4">
               <div className="flex-1">
@@ -354,15 +379,32 @@ function App() {
           </CardContent>
         </Card>
 
+        {/* Search Error */}
+        {searchError && (
+          <div className="mb-6 p-4 bg-red-100 border border-red-200 rounded-md">
+            <p className="text-red-700">{searchError}</p>
+          </div>
+        )}
+          </TabsContent>
+
+          <TabsContent value="lists">
+            <ShoppingListGenerator />
+          </TabsContent>
+
+          <TabsContent value="merger">
+            <Merger />
+          </TabsContent>
+        </Tabs>
+
         {/* Results */}
-        {loading && (
+        {activeTab === 'search' && loading && (
           <div className="text-center py-12">
             <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-blue-600" />
             <p className="text-lg text-gray-600">Searching across all stores...</p>
           </div>
         )}
 
-        {!loading && products.length > 0 && (
+        {activeTab === 'search' && !loading && products.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-gray-900">
@@ -487,7 +529,7 @@ function App() {
           </div>
         )}
 
-        {!loading && products.length === 0 && searchQuery && (
+        {activeTab === 'search' && !loading && products.length === 0 && searchQuery && (
           <div className="text-center py-12">
             {searchError ? (
               <>
@@ -505,7 +547,7 @@ function App() {
           </div>
         )}
 
-        {!loading && products.length === 0 && !searchQuery && (
+        {activeTab === 'search' && !loading && products.length === 0 && !searchQuery && (
           <div className="text-center py-12">
             <div className="text-6xl mb-4">🛒</div>
             <h3 className="text-xl font-semibold text-gray-900 mb-2">Start your search</h3>

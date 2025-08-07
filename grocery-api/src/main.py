@@ -35,4 +35,6 @@ def serve(path):
 
 
 if __name__ == '__main__':
+    print("Starting Flask server on port 5002...")
+    sys.stdout.flush()
     app.run(host='0.0.0.0', port=5002, debug=True)

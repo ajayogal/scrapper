@@ -6,6 +6,7 @@ import os
 import hashlib
 import time
 import sys
+import logging
 
 # Import the Python scrapers from local scrapers module
 try:
@@ -22,6 +23,24 @@ except ImportError as e:
     PYTHON_SCRAPERS_AVAILABLE = False
 
 grocery_bp = Blueprint('grocery', __name__)
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+def log_and_print(message, level='info'):
+    """Print message to console and log it with proper flushing"""
+    print(message)
+    sys.stdout.flush()  # Force flush the output buffer
+    
+    if level.lower() == 'info':
+        logger.info(message)
+    elif level.lower() == 'error':
+        logger.error(message)
+    elif level.lower() == 'warning':
+        logger.warning(message)
+    elif level.lower() == 'debug':
+        logger.debug(message)
 
 # In-memory cache for search results
 search_cache = {}
@@ -42,7 +61,7 @@ def run_python_scrapers(query, store='all', max_results=200):
         
         if store == 'all' or store == 'aldi':
             try:
-                print(f"Scraping ALDI for: {query}")
+                log_and_print(f"Scraping ALDI for: {query}")
                 aldi_products = fetch_aldi_products_with_discount(query, limit=min(max_results, 100))
                 
                 # Convert ALDI products to standard format
@@ -65,11 +84,11 @@ def run_python_scrapers(query, store='all', max_results=200):
                     all_products.append(standardized_product)
                     
             except Exception as e:
-                print(f"Error scraping ALDI: {e}")
+                log_and_print(f"Error scraping ALDI: {e}", 'error')
         
         if store == 'all' or store == 'iga':
             try:
-                print(f"Scraping IGA for: {query}")
+                log_and_print(f"Scraping IGA for: {query}")
                 iga_products = fetch_iga_products(query, limit=min(max_results, 100))
                 
                 # Convert IGA products to standard format
@@ -92,7 +111,7 @@ def run_python_scrapers(query, store='all', max_results=200):
                     all_products.append(standardized_product)
                     
             except Exception as e:
-                print(f"Error scraping IGA: {e}")
+                log_and_print(f"Error scraping IGA: {e}", 'error')
         
         return {'products': all_products}
         
@@ -102,6 +121,7 @@ def run_python_scrapers(query, store='all', max_results=200):
 def run_node_scraper(query, store='all', max_results=200):
     """Run the Node.js scraper using subprocess"""
     try:
+        log_and_print(f"Running Node.js scraper for: {query}")
         # Get the path to the grocery_scraper directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
         grocery_scraper_path = os.path.join(current_dir, '..', '..', 'grocery_scraper')
@@ -176,10 +196,10 @@ def search_products():
         
         # Check if we have cached results that are still valid
         if cache_key in search_cache and is_cache_valid(search_cache[cache_key]):
-            print(f"Using cached results for query: {query}, store: {store}")
+            log_and_print(f"Using cached results for query: {query}, store: {store}")
             all_products = search_cache[cache_key]['products']
         else:
-            print(f"Fetching fresh results for query: {query}, store: {store}")
+            log_and_print(f"Fetching fresh results for query: {query}, store: {store}")
             # Fetch more results initially to reduce the need for re-scraping
             # Set a higher limit to get comprehensive results
             # if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi', 'iga']:
@@ -236,7 +256,7 @@ def search_products():
         })
     
     except Exception as e:
-        print(f"API error: {e}")
+        log_and_print(f"API error: {e}", 'error')
         return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @grocery_bp.route('/stores', methods=['GET'])

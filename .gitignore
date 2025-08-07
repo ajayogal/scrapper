@@ -7,3 +7,10 @@ package-lock.json
 */*/package-lock.json
 .DS_Store
 */.DS_Store
+
+# Python cache files
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class

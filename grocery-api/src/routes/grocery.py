@@ -1118,19 +1118,19 @@ def search_store_products(store_name):
         else:
             dietary_search_terms = {
                 'none': [
-                    'meat', 'fruit', 'vegetables', 'dairy', 'fish'
+                    'grocery'
                 ],  
                 'vegetarian': [
-                    'vegetables', 'fruit', 'dairy'
+                    'vegetarian'
                 ],
                 'vegan': [
-                    'vegan', 'dairy'
+                    'vegan'
                 ],
                 'gluten free': [
-                    'gluten free', 'rice flour', 'almond flour'
+                    'gluten free'
                 ],
                 'others': [
-                    'meat', 'vegetables', 'dairy', 'fish'
+                    'others'
                 ]
             }
         # Use dietary preference search terms - all preferences have predefined terms

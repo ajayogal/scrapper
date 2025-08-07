@@ -1070,6 +1070,182 @@ def auto_generated_list_more():
             'details': str(e)
         }), 500
 
+@grocery_bp.route('/store/<store_name>', methods=['POST'])
+@cross_origin()
+def search_store_products(store_name):
+    """Search for multiple products in a specific store, returning 10 cheapest items for each search term"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+        
+        search_terms = data.get('search_terms', [])
+        dietary_preference = data.get('dietary_preference', 'none')
+        page = data.get('page', 1)
+        per_page = data.get('perPage', 10)
+        
+        # Define search terms for different dietary preferences
+        
+        if(store_name in ['iga', 'aldi']):
+            dietary_search_terms = {
+                'none': [
+                    # General groceries - any food items (non-veg and veg)
+                    'bread', 'milk', 'eggs', 'chicken', 'beef', 'rice', 'pasta', 'cheese', 'butter',
+                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'salmon', 'tuna',
+                    'flour', 'sugar', 'oil', 'onions', 'potatoes', 'tomatoes', 'bananas', 'apples'
+                ],  
+                'vegetarian': [
+                    'vegetarian protein', 'tofu', 'tempeh', 'vegetarian burgers', 'beans', 'lentils', 'chickpeas',
+                    'quinoa', 'vegetarian pasta', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
+                    'vegetarian cheese', 'plant milk', 'vegetarian sausages', 'falafel', 'hummus'
+                ],
+                'vegan': [
+                    'vegan protein', 'tofu', 'tempeh', 'vegan burgers', 'vegan cheese', 'plant milk', 'oat milk',
+                    'almond milk', 'soy milk', 'coconut milk', 'vegan butter', 'nutritional yeast', 'vegan yogurt',
+                    'vegan ice cream', 'vegan chocolate', 'agave', 'maple syrup', 'cashew cream'
+                ],
+                'gluten free': [
+                    'gluten free bread', 'gluten free pasta', 'gluten free flour', 'rice flour', 'almond flour',
+                    'gluten free cereal', 'gluten free crackers', 'gluten free pizza', 'quinoa', 'rice cakes',
+                    'gluten free cookies', 'gluten free cake mix', 'corn tortillas', 'rice noodles'
+                ],
+                'others': [
+                    'organic', 'natural', 'free range', 'grass fed', 'hormone free', 'antibiotic free',
+                    'non gmo', 'fair trade', 'sustainable', 'local', 'artisan', 'raw', 'probiotic'
+                ]
+            }
+        else:
+            dietary_search_terms = {
+                'none': [
+                    'meat', 'fruit', 'vegetables', 'dairy', 'fish'
+                ],  
+                'vegetarian': [
+                    'vegetables', 'fruit', 'dairy'
+                ],
+                'vegan': [
+                    'vegan', 'dairy'
+                ],
+                'gluten free': [
+                    'gluten free', 'rice flour', 'almond flour'
+                ],
+                'others': [
+                    'meat', 'vegetables', 'dairy', 'fish'
+                ]
+            }
+        # Use dietary preference search terms - all preferences have predefined terms
+        if dietary_preference in dietary_search_terms:
+            search_terms = dietary_search_terms[dietary_preference]
+            log_and_print(f"Using dietary preference '{dietary_preference}' with {len(search_terms)} search terms")
+        else:
+            return jsonify({'error': f'Invalid dietary_preference "{dietary_preference}". Supported: none, vegetarian, vegan, gluten free, others'}), 400
+        
+        # Validate store name
+        store_name = store_name.lower().strip()
+        valid_stores = ['aldi', 'iga', 'woolworths', 'coles', 'harris']
+        if store_name not in valid_stores:
+            return jsonify({
+                'error': f'Invalid store "{store_name}". Supported stores: {", ".join(valid_stores)}'
+            }), 400
+        
+        log_and_print(f"Searching {store_name} for multiple terms: {search_terms}")
+        
+        all_products = []
+        search_term_stats = []
+        
+        # Search for each term individually
+        for search_term in search_terms:
+            search_term = search_term.strip()
+            if not search_term:
+                continue
+                
+            log_and_print(f"Searching {store_name} for: {search_term}")
+            
+            # Use the existing scraper function with specific store and limit of 50 to get enough results
+            scraper_result = run_node_scraper(search_term, store_name, max_results=50)
+            
+            if 'error' in scraper_result:
+                log_and_print(f"Error searching for {search_term} in {store_name}: {scraper_result['error']}", 'error')
+                search_term_stats.append({
+                    'search_term': search_term,
+                    'total_found': 0,
+                    'products_returned': 0,
+                    'error': scraper_result['error']
+                })
+                continue
+            
+            # Extract products from scraper result
+            if 'products' in scraper_result:
+                raw_products = scraper_result['products']
+            elif isinstance(scraper_result, list):
+                raw_products = scraper_result
+            else:
+                raw_products = []
+            
+            # Process and standardize products
+            processed_products = []
+            for p in raw_products:
+                store_name_from_product = p.get("store", store_name)
+                product = {
+                    "title": p.get("title", "N/A"),
+                    "store": store_name_from_product,
+                    "store_logo": get_store_logo_url(store_name_from_product),
+                    "price": p.get("price", f"${p.get('numericPrice', 0):.2f}"),
+                    "discountedPrice": p.get("discountedPrice", ""),
+                    "discount": p.get("discount", ""),
+                    "numericPrice": p.get("numericPrice", 0),
+                    "inStock": p.get("inStock", True),
+                    "unitPrice": p.get("unitPrice", ""),
+                    "imageUrl": p.get("imageUrl", ""),
+                    "brand": p.get("brand", ""),
+                    "category": p.get("category", ""),
+                    "productUrl": p.get("productUrl", ""),
+                    "search_term": search_term,  # Add the search term that found this product
+                    "scraped_at": p.get("scraped_at", time.strftime('%Y-%m-%dT%H:%M:%SZ'))
+                }
+                
+                # Only include products with valid prices
+                if product["numericPrice"] > 0:
+                    processed_products.append(product)
+            
+            # Sort by price (cheapest first) and take the 10 cheapest
+            processed_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
+            cheapest_10 = processed_products[:10]
+            
+            # Add to all products
+            all_products.extend(cheapest_10)
+            
+            # Track stats for this search term
+            search_term_stats.append({
+                'search_term': search_term,
+                'total_found': len(processed_products),
+                'products_returned': len(cheapest_10)
+            })
+            
+            log_and_print(f"Found {len(processed_products)} total, returning {len(cheapest_10)} cheapest products for '{search_term}' in {store_name}")
+        
+        # Sort all products by price (cheapest first)
+        all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
+        
+        return jsonify({
+            'success': True,
+            'store': store_name,
+            'store_logo': get_store_logo_url(store_name),
+            'dietary_preference': dietary_preference,
+            'search_terms': search_terms,
+            'search_term_stats': search_term_stats,
+            'total_products': len(all_products),
+            'products': all_products,
+            'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        })
+        
+    except Exception as e:
+        log_and_print(f"Error in search_store_products: {e}", 'error')
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
 @grocery_bp.route('/logos/<logo_name>', methods=['GET'])
 @cross_origin()
 def serve_logo(logo_name):

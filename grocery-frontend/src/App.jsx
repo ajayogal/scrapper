@@ -5,10 +5,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge.jsx'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select.jsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs.jsx'
-import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus, Trash2, RefreshCw, DollarSign, Package, TrendingUp, Merge } from 'lucide-react'
+import { Loader2, Search, ShoppingCart, Star, Filter, SortAsc, Plus, Trash2, RefreshCw, DollarSign, Package, TrendingUp, Merge, Store } from 'lucide-react'
 import './App.css'
 import Merger from '@/components/Merger.jsx'
 import ShoppingListGenerator from '@/components/ShoppingListGenerator.jsx'
+import StoreSearch from '@/components/StoreSearch.jsx'
 
 function App() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -266,10 +267,14 @@ function App() {
 
         {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="search" className="flex items-center gap-2">
               <Search className="h-4 w-4" />
               Product Search
+            </TabsTrigger>
+            <TabsTrigger value="store" className="flex items-center gap-2">
+              <Store className="h-4 w-4" />
+              Store Search
             </TabsTrigger>
             <TabsTrigger value="lists" className="flex items-center gap-2">
               <Package className="h-4 w-4" />
@@ -390,6 +395,10 @@ function App() {
             <p className="text-red-700">{searchError}</p>
           </div>
         )}
+          </TabsContent>
+
+          <TabsContent value="store">
+            <StoreSearch />
           </TabsContent>
 
           <TabsContent value="lists">

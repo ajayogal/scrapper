@@ -59,13 +59,14 @@ def run_python_scrapers(query, store='all', max_results=200):
     try:
         all_products = []
         
-        if store == 'all' or store == 'aldi':
+        if store == 'all' or store == 'aldi-py':
             try:
-                log_and_print(f"Scraping ALDI for: {query}")
+                log_and_print(f"LN-64: Scraping ALDI for: {query}")
                 aldi_products = fetch_aldi_products_with_discount(query, limit=min(max_results, 100))
                 
                 # Convert ALDI products to standard format
                 for product in aldi_products:
+                    log_and_print(f"LN-69: Product: {product}")
                     standardized_product = {
                         'title': product.get('name', ''),
                         'store': 'Aldi',
@@ -86,9 +87,9 @@ def run_python_scrapers(query, store='all', max_results=200):
             except Exception as e:
                 log_and_print(f"Error scraping ALDI: {e}", 'error')
         
-        if store == 'all' or store == 'iga':
+        if store == 'all' or store == 'iga-py':
             try:
-                log_and_print(f"Scraping IGA for: {query}")
+                log_and_print(f"LN-91: Scraping IGA for: {query}")
                 iga_products = fetch_iga_products(query, limit=min(max_results, 100))
                 
                 # Convert IGA products to standard format
@@ -121,7 +122,7 @@ def run_python_scrapers(query, store='all', max_results=200):
 def run_node_scraper(query, store='all', max_results=200):
     """Run the Node.js scraper using subprocess"""
     try:
-        log_and_print(f"Running Node.js scraper for: {query}")
+        log_and_print(f"LN-124: Running Node.js scraper for: {query}")
         # Get the path to the grocery_scraper directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
         grocery_scraper_path = os.path.join(current_dir, '..', '..', 'grocery_scraper')
@@ -196,20 +197,20 @@ def search_products():
         
         # Check if we have cached results that are still valid
         if cache_key in search_cache and is_cache_valid(search_cache[cache_key]):
-            log_and_print(f"Using cached results for query: {query}, store: {store}")
+            log_and_print(f"LN-199: Using cached results for query: {query}, store: {store}")
             all_products = search_cache[cache_key]['products']
         else:
-            log_and_print(f"Fetching fresh results for query: {query}, store: {store}")
+            log_and_print(f"LN-201: Fetching fresh results for query: {query}, store: {store}")
             # Fetch more results initially to reduce the need for re-scraping
             # Set a higher limit to get comprehensive results
-            # if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi', 'iga']:
-            #     print("Using Python scrapers")
-            #     scraper_result = run_python_scrapers(query, store, max_results=200)
-            # else:
-            #     print("Using Node.js scraper")
-            #     scraper_result = run_node_scraper(query, store, max_results=200)
+            if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi-py', 'iga-py']:
+                log_and_print("Using Python scrapers")
+                scraper_result = run_python_scrapers(query, store, max_results=200)
+            else:
+                log_and_print("Using Node.js scraper")
+                scraper_result = run_node_scraper(query, store, max_results=200)
             
-            scraper_result = run_node_scraper(query, store, max_results=50)
+            # scraper_result = run_node_scraper(query, store, max_results=50)
 
             if 'error' in scraper_result:
                 return jsonify({
@@ -265,11 +266,13 @@ def get_stores():
     """Get list of supported stores"""
     stores = [
         {'id': 'all', 'name': 'All Stores'},
-        {'id': 'aldi', 'name': 'Aldi'},
         {'id': 'woolworths', 'name': 'Woolworths'},
         {'id': 'coles', 'name': 'Coles'},
+        {'id': 'harris', 'name': 'Harris Farm Markets'},
         {'id': 'iga', 'name': 'IGA'},
-        {'id': 'harris', 'name': 'Harris Farm Markets'}
+        {'id': 'aldi', 'name': 'Aldi'},
+        {'id': 'iga-py', 'name': 'IGA (Python)'},
+        {'id': 'aldi-py', 'name': 'Aldi (Python)'},
     ]
     
     return jsonify({
@@ -303,10 +306,6 @@ def clear_cache():
         'cache_entries': len(search_cache)
     })
 
-# Mock endpoint for development/testing
-@grocery_bp.route('/search/mock', methods=['POST'])
-@cross_origin()
-def mock_search():
     """Mock search endpoint for testing with pagination"""
     data = request.get_json()
     query = data.get('query', '')

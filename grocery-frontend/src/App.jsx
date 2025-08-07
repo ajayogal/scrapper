@@ -309,9 +309,11 @@ function App() {
                   <SelectItem value="all">All Stores</SelectItem>
                   <SelectItem value="woolworths">Woolworths</SelectItem>
                   <SelectItem value="coles">Coles</SelectItem>
-                  <SelectItem value="iga">IGA</SelectItem>
                   <SelectItem value="harris">Harris Farm Markets</SelectItem>
+                  <SelectItem value="iga">IGA</SelectItem>
                   <SelectItem value="aldi">Aldi</SelectItem>
+                  <SelectItem value="iga-py">IGA (Python)</SelectItem>
+                  <SelectItem value="aldi-py">Aldi (Python)</SelectItem>
                 </SelectContent>
               </Select>
 

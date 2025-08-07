@@ -5,14 +5,24 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, send_from_directory, jsonify
 from flask_cors import CORS
+from dotenv import load_dotenv
 from src.routes.grocery import grocery_bp
 from src.routes.merger import merger_bp
 
-app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
-app.config['SECRET_KEY'] = 'asdf#FGSgvasgf$5$WGT'
+# Load environment variables from .env file
+load_dotenv()
 
-# Enable CORS for all routes
-CORS(app, origins=['http://localhost:5173', 'http://127.0.0.1:5173','http://localhost:5170', 'http://127.0.0.1:5170','http://localhost:3333'])
+app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
+
+# Get configuration from environment variables
+SECRET_KEY = os.getenv('SECRET_KEY', 'asdf#FGSgvasgf$5$WGT')
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173')
+
+app.config['SECRET_KEY'] = SECRET_KEY
+
+# Enable CORS for all routes - convert comma-separated string to list
+cors_origins_list = [origin.strip() for origin in CORS_ORIGINS.split(',')]
+CORS(app, origins=cors_origins_list)
 
 app.register_blueprint(grocery_bp, url_prefix='/api/grocery')
 app.register_blueprint(merger_bp, url_prefix='/api/merger')
@@ -29,6 +39,12 @@ def health_status():
 
 
 if __name__ == '__main__':
-    print("Starting Flask server on port 5002...")
+    # Get Flask configuration from environment variables
+    FLASK_HOST = os.getenv('FLASK_HOST', '0.0.0.0')
+    FLASK_PORT = int(os.getenv('FLASK_PORT', '5002'))
+    FLASK_DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
+    
+    print(f"Starting Flask server on {FLASK_HOST}:{FLASK_PORT}...")
+    print(cors_origins_list)
     sys.stdout.flush()
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    app.run(host=FLASK_HOST, port=FLASK_PORT, debug=FLASK_DEBUG)

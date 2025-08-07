@@ -167,9 +167,27 @@ def run_node_scraper(query, store='all', max_results=200):
     """Run the Node.js scraper using subprocess"""
     try:
         log_and_print(f"LN-124: Running Node.js scraper for: {query}")
-        # Get the path to the grocery_scraper directory
+        # Get the path to the grocery_scraper directory with multiple fallbacks
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        grocery_scraper_path = os.path.join(current_dir, '..', '..', 'grocery_scraper')
+        
+        # Try multiple possible paths for the grocery_scraper directory
+        possible_paths = [
+            os.path.join(current_dir, '..', '..', 'grocery_scraper'),  # Original path
+            os.path.join(current_dir, '..', 'grocery_scraper'),       # One level up
+            os.path.join(os.path.dirname(current_dir), 'grocery_scraper'),  # Same level as src
+            '/app/grocery_scraper',  # Common production path
+            './grocery_scraper',     # Relative path
+        ]
+        
+        grocery_scraper_path = None
+        for path in possible_paths:
+            if os.path.exists(path) and os.path.isfile(os.path.join(path, 'index.js')):
+                grocery_scraper_path = path
+                log_and_print(f"Found grocery_scraper at: {path}")
+                break
+        
+        if not grocery_scraper_path:
+            return {"error": f"Could not find grocery_scraper directory. Tried: {possible_paths}"}
         
         # Prepare the command to run the Node.js scraper
         cmd = ['node', 'index.js', 'search', query]
@@ -252,16 +270,40 @@ def search_products():
             all_products = search_cache[cache_key]['products']
         else:
             log_and_print(f"LN-201: Fetching fresh results for query: {query}, store: {store}")
-            # # Fetch more results initially to reduce the need for re-scraping
-            # # Set a higher limit to get comprehensive results
-            # if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi-py', 'iga-py']:
-            #     log_and_print("Using Python scrapers")
-            #     scraper_result = run_python_scrapers(query, store, max_results=200)
-            # else:
-            #     log_and_print("Using Node.js scraper")
-            #     scraper_result = run_node_scraper(query, store, max_results=200)
             
-            scraper_result = run_node_scraper(query, store, max_results=50)
+            # Priority: Use Python scrapers for ALDI and IGA, fallback to Node.js
+            scraper_result = {"products": []}
+            
+            # Use Python scrapers for supported stores
+            if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi', 'iga']:
+                log_and_print("Using Python scrapers")
+                scraper_result = run_python_scrapers(query, store, max_results=200)
+                
+                if 'error' in scraper_result:
+                    log_and_print(f"Python scrapers failed: {scraper_result['error']}")
+                    scraper_result = {"products": []}  # Reset to try Node.js
+                elif scraper_result.get('products'):
+                    log_and_print(f"Python scrapers returned {len(scraper_result['products'])} products")
+                else:
+                    log_and_print("Python scrapers returned no products")
+            
+            # Fallback to Node.js scraper if needed
+            if (not scraper_result.get('products') or 
+                store not in ['all', 'aldi', 'iga'] or 
+                not PYTHON_SCRAPERS_AVAILABLE):
+                
+                log_and_print("Using Node.js scraper")
+                node_result = run_node_scraper(query, store, max_results=50)
+                
+                if 'error' not in node_result:
+                    # Merge with existing Python results if any
+                    existing_products = scraper_result.get('products', [])
+                    node_products = node_result.get('products', [])
+                    scraper_result = {'products': existing_products + node_products}
+                else:
+                    # If Node.js failed and no Python results, use the Node.js error
+                    if not scraper_result.get('products'):
+                        scraper_result = node_result
 
             if 'error' in scraper_result:
                 return jsonify({

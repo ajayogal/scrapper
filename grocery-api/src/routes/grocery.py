@@ -172,11 +172,12 @@ def run_node_scraper(query, store='all', max_results=200):
         
         # Try multiple possible paths for the grocery_scraper directory
         possible_paths = [
-            os.path.join(current_dir, '..', '..', 'grocery_scraper'),  # Original path
-            os.path.join(current_dir, '..', 'grocery_scraper'),       # One level up
+            '/home/ec2-user/apps/scrapper/grocery-api/grocery_scraper',  # Exact production path
+            os.path.join(current_dir, '..', '..', 'grocery_scraper'),   # Original development path
+            os.path.join(current_dir, '..', 'grocery_scraper'),         # One level up
             os.path.join(os.path.dirname(current_dir), 'grocery_scraper'),  # Same level as src
-            '/app/grocery_scraper',  # Common production path
-            './grocery_scraper',     # Relative path
+            '/app/grocery_scraper',      # Docker production path
+            './grocery_scraper',         # Relative path
         ]
         
         grocery_scraper_path = None
@@ -200,6 +201,9 @@ def run_node_scraper(query, store='all', max_results=200):
         # Add JSON flag for API usage
         cmd.append('--json')
         
+        # Log the exact command being run
+        log_and_print(f"Running command: {' '.join(cmd)} in directory: {grocery_scraper_path}")
+        
         # Run the Node.js script
         result = subprocess.run(
             cmd,
@@ -208,6 +212,13 @@ def run_node_scraper(query, store='all', max_results=200):
             text=True,
             timeout=60  # 60 second timeout
         )
+        
+        # Log subprocess results for debugging
+        log_and_print(f"Subprocess return code: {result.returncode}")
+        if result.stdout:
+            log_and_print(f"Subprocess stdout: {result.stdout[:500]}...")  # First 500 chars
+        if result.stderr:
+            log_and_print(f"Subprocess stderr: {result.stderr}")
         
         if result.returncode == 0:
             # Parse the JSON output from the Node.js script
@@ -274,10 +285,12 @@ def search_products():
             # Priority: Use Python scrapers for ALDI and IGA, fallback to Node.js
             scraper_result = {"products": []}
             
-            # Use Python scrapers for supported stores
-            if PYTHON_SCRAPERS_AVAILABLE and store in ['all', 'aldi', 'iga']:
-                log_and_print("Using Python scrapers")
-                scraper_result = run_python_scrapers(query, store, max_results=200)
+            # Always use Node.js scraper for production reliability
+            # Only use Python scrapers if specifically requested with -py suffix
+            if PYTHON_SCRAPERS_AVAILABLE and store in ['aldi-py', 'iga-py']:
+                log_and_print("Using Python scrapers (explicitly requested)")
+                python_store = store.replace('-py', '')  # Convert aldi-py -> aldi
+                scraper_result = run_python_scrapers(query, python_store, max_results=200)
                 
                 if 'error' in scraper_result:
                     log_and_print(f"Python scrapers failed: {scraper_result['error']}")
@@ -287,10 +300,9 @@ def search_products():
                 else:
                     log_and_print("Python scrapers returned no products")
             
-            # Fallback to Node.js scraper if needed
+            # Use Node.js scraper for all stores (including aldi, iga) unless -py explicitly requested
             if (not scraper_result.get('products') or 
-                store not in ['all', 'aldi', 'iga'] or 
-                not PYTHON_SCRAPERS_AVAILABLE):
+                store not in ['aldi-py', 'iga-py']):
                 
                 log_and_print("Using Node.js scraper")
                 node_result = run_node_scraper(query, store, max_results=50)
@@ -404,11 +416,44 @@ def get_stores():
 @cross_origin()
 def health_check():
     """Health check endpoint"""
+    # Test grocery_scraper path resolution
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    possible_paths = [
+        '/home/ec2-user/apps/scrapper/grocery-api/grocery_scraper',  # Exact production path
+        os.path.join(current_dir, '..', '..', 'grocery_scraper'),   # Original development path
+        os.path.join(current_dir, '..', 'grocery_scraper'),         # One level up
+        os.path.join(os.path.dirname(current_dir), 'grocery_scraper'),  # Same level as src
+        '/app/grocery_scraper',      # Docker production path
+        './grocery_scraper',         # Relative path
+    ]
+    
+    found_paths = []
+    grocery_scraper_found = False
+    
+    for path in possible_paths:
+        if os.path.exists(path):
+            index_js_exists = os.path.isfile(os.path.join(path, 'index.js'))
+            found_paths.append({
+                'path': path,
+                'exists': True,
+                'index_js_exists': index_js_exists
+            })
+            if index_js_exists:
+                grocery_scraper_found = True
+        else:
+            found_paths.append({
+                'path': path,
+                'exists': False,
+                'index_js_exists': False
+            })
+    
     return jsonify({
         'success': True,
         'status': 'healthy',
         'python_scrapers_available': PYTHON_SCRAPERS_AVAILABLE,
-        'node_scraper_available': True,  # Node.js scraper is available via subprocess
+        'node_scraper_available': grocery_scraper_found,
+        'grocery_scraper_path_check': found_paths,
+        'current_directory': current_dir,
         'cache_entries': len(search_cache),
         'cache_keys': list(search_cache.keys())
     })

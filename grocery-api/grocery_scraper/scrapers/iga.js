@@ -271,6 +271,230 @@ class IGAScraper {
         return this.searchProducts(query, maxResults, storeId);
     }
 
+    // Fetch special products using promotional search terms
+    async fetchSpecialProducts(limitPerPage = 100, targetProducts = 500, storeId = null) {
+        try {
+            const actualStoreId = storeId || this.defaultStoreId;
+            const searchUrl = `${this.baseUrl}/${actualStoreId}/search`;
+            
+            const products = [];
+            let specialProductCount = 0;
+            
+            // Search terms that typically yield promotional/special products
+            const promotionalQueries = [
+                "special",      // Items on special
+                "half price",   // Half price items  
+                "sale",         // Sale items
+                "offer",        // Special offers
+                "discount",     // Discounted items
+                "promo",        // Promotional items
+                "deal",         // Deal items
+                "save",         // Save money items
+                "reduced",      // Reduced price items
+                "clearance"     // Clearance items
+            ];
+            
+            console.log(`Starting to fetch IGA special products using promotional search terms (target: ${targetProducts})...`);
+            console.log(`Will search for: ${promotionalQueries.join(', ')}`);
+            
+            for (let queryIdx = 0; queryIdx < promotionalQueries.length; queryIdx++) {
+                if (specialProductCount >= targetProducts) {
+                    break;
+                }
+                
+                const query = promotionalQueries[queryIdx];
+                console.log(`\n--- Searching for '${query}' products (${queryIdx + 1}/${promotionalQueries.length}) ---`);
+                
+                // Search with current promotional term
+                const params = {
+                    q: query,
+                    take: limitPerPage
+                };
+                
+                const response = await axios.get(searchUrl, {
+                    params: params,
+                    headers: this.headers,
+                    timeout: 10000
+                });
+                
+                if (response.status !== 200) {
+                    console.log(`Failed to fetch data for query '${query}': HTTP ${response.status}`);
+                    continue;
+                }
+                
+                const data = response.data;
+                
+                // Check if there are items in the response
+                if (data.items && data.items.length > 0) {
+                    const items = data.items;
+                    console.log(`Found ${items.length} items for query '${query}'`);
+                    
+                    for (const item of items) {
+                        // Filter for products that actually have discounts/special pricing
+                        const hasDiscount = this.checkIfSpecialProduct(item);
+                        
+                        // Only include products that have actual discounts or special pricing
+                        if (hasDiscount) {
+                            const product = this.parseSpecialProduct(item, query);
+                            if (product) {
+                                products.push(product);
+                                specialProductCount++;
+                                
+                                // Stop if we've reached the target
+                                if (specialProductCount >= targetProducts) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    const queryProducts = products.filter(p => p.searchQuery === query);
+                    console.log(`Added ${queryProducts.length} special products from '${query}' search`);
+                } else {
+                    console.log(`No items found for query '${query}'`);
+                }
+                
+                // Respectful delay between searches
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            // Remove duplicates based on SKU
+            const uniqueProducts = this.removeDuplicates(products);
+            
+            // Ensure we don't exceed target
+            const finalProducts = uniqueProducts.slice(0, targetProducts);
+            
+            console.log(`Successfully fetched ${finalProducts.length} special products from IGA`);
+            return this.sortProductsByPrice(finalProducts);
+            
+        } catch (error) {
+            console.error('Error fetching special products:', error.message);
+            throw error;
+        }
+    }
+
+    // Check if a product has discount or special pricing
+    checkIfSpecialProduct(item) {
+        try {
+            const originalPrice = item.wasPriceNumeric || 0;
+            const currentPrice = item.priceNumeric || 0;
+            const priceLabel = (item.priceLabel || '').toLowerCase();
+            
+            // Check if this is actually a special/discounted product
+            const hasNumericDiscount = originalPrice && currentPrice && originalPrice > currentPrice;
+            const hasSpecialTerms = ['special', 'half', 'price', 'off', 'save', 'deal', 'discount']
+                .some(term => priceLabel.includes(term));
+            
+            return hasNumericDiscount || hasSpecialTerms;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // Parse product with special product information
+    parseSpecialProduct(item, searchQuery) {
+        try {
+            const product = {};
+            
+            // Basic product info
+            product.title = item.name || 'Unknown';
+            product.store = 'IGA';
+            
+            // Handle price using IGA API structure
+            product.price = item.price || 'N/A';
+            product.priceNumeric = item.priceNumeric || 0;
+            product.originalPrice = item.wasPrice || null;
+            product.originalPriceNumeric = item.wasPriceNumeric || null;
+            product.discountedPrice = item.price || 'N/A';
+            
+            // Set discount fields for compatibility
+            if (item.wasPrice) {
+                product.discount = item.wasPrice;
+            } else {
+                product.discount = null;
+            }
+            
+            // Extract numeric price for sorting
+            product.numericPrice = this.parsePrice(item.price);
+            
+            // Handle image URL - IGA API structure
+            let imageUrl = null;
+            const imageData = item.image || {};
+            if (typeof imageData === 'object') {
+                imageUrl = imageData.default;
+            } else {
+                imageUrl = imageData;
+            }
+            product.imageUrl = imageUrl;
+            
+            // Basic metadata
+            product.brand = item.brand || 'IGA';
+            product.unitPrice = item.pricePerUnit || 'N/A';
+            product.productType = 'special';  // Mark as special product
+            product.promotionId = item.productId || item.sku || 'N/A';
+            product.sku = item.sku || 'N/A';
+            product.inStock = true;
+            product.category = '';
+            
+            // Additional special product fields from IGA API
+            product.promotionText = item.priceLabel || '';
+            product.description = item.description || '';
+            product.sellBy = item.sellBy || '';
+            product.unitOfSize = item.unitOfSize || {};
+            product.available = item.available !== undefined ? item.available : true;
+            product.searchQuery = searchQuery;  // Track which query found this product
+            
+            // Calculate savings if possible
+            if (product.originalPriceNumeric && product.priceNumeric && 
+                product.originalPriceNumeric > product.priceNumeric) {
+                product.savingsAmount = product.originalPriceNumeric - product.priceNumeric;
+                product.savingsPercentage = Math.round(
+                    ((product.originalPriceNumeric - product.priceNumeric) / product.originalPriceNumeric) * 100 * 10
+                ) / 10;
+            }
+            
+            // TPR (Temporary Price Reduction) information
+            const tprInfo = item.tprPrice || [];
+            if (tprInfo && tprInfo.length > 0) {
+                const tpr = tprInfo[0];
+                product.markdownAmount = tpr.markdown || 0;
+                product.tprLabel = tpr.label || '';
+                product.tprActive = tpr.active || false;
+            }
+            
+            // Promotion information
+            const promotions = item.promotions || [];
+            product.promotionsCount = item.totalNumberOfPromotions || 0;
+            if (promotions.length > 0) {
+                product.promotionDetails = promotions.map(p => p.name || '');
+            }
+            
+            // Product URL
+            product.productUrl = this.buildProductUrl(item);
+            
+            return product;
+        } catch (error) {
+            console.error('Error parsing special product:', error);
+            return null;
+        }
+    }
+
+    // Remove duplicates based on SKU
+    removeDuplicates(products) {
+        const seenSkus = new Set();
+        const uniqueProducts = [];
+        
+        for (const product of products) {
+            const sku = product.sku || product.promotionId || '';
+            if (!seenSkus.has(sku)) {
+                seenSkus.add(sku);
+                uniqueProducts.push(product);
+            }
+        }
+        
+        return uniqueProducts;
+    }
+
     // Static method for standalone usage
     static async search(query, maxResults = 50, storeId = null) {
         const scraper = new IGAScraper();
@@ -299,27 +523,98 @@ class IGAScraper {
         
         return results;
     }
+
+    // Static method for fetching special products
+    static async fetchSpecial(targetProducts = 500, limitPerPage = 100, storeId = null) {
+        const scraper = new IGAScraper();
+        await scraper.init();
+        const results = await scraper.fetchSpecialProducts(limitPerPage, targetProducts, storeId);
+        await scraper.close();
+        
+        console.log(`Fetched ${results.length} special products`);
+        
+        if (results.length > 0) {
+            results.forEach((product, index) => {
+                console.log("--->>>");
+                console.log(`Special Product ${index + 1}:`);
+                console.log(`Name: ${product.title}`);
+                console.log(`Price: ${product.price} ($${product.priceNumeric.toFixed(2)})`);
+                console.log(`Original Price: ${product.originalPrice || 'N/A'}`);
+                if (product.markdownAmount) {
+                    console.log(`Savings: $${product.markdownAmount.toFixed(2)}`);
+                }
+                console.log(`Promotion Text: ${product.promotionText}`);
+                console.log(`TPR Label: ${product.tprLabel || 'N/A'}`);
+                console.log(`Image URL: ${product.imageUrl}`);
+                console.log(`Brand: ${product.brand}`);
+                console.log(`Store: ${product.store}`);
+                console.log(`Unit Price: ${product.unitPrice}`);
+                console.log(`SKU: ${product.sku}`);
+                console.log(`Available: ${product.available}`);
+                console.log(`Promotions Count: ${product.promotionsCount}`);
+                console.log("---");
+            });
+        } else {
+            console.log("No special products found.");
+        }
+        
+        return results;
+    }
 }
 
 module.exports = IGAScraper;
 
 // Command line usage
 if (require.main === module) {
-    const query = process.argv[2];
-    if (!query) {
-        console.log("Usage: node iga.js <search_query>");
-        console.log("Example: node iga.js 'milk'");
+    const firstArg = process.argv[2];
+    
+    if (!firstArg) {
+        console.log("Usage:");
+        console.log("  node iga.js <search_query>     - Search for specific products");
+        console.log("  node iga.js special [count]    - Fetch special products");
+        console.log("");
+        console.log("Examples:");
+        console.log("  node iga.js 'milk'");
+        console.log("  node iga.js special");
+        console.log("  node iga.js special 200");
         process.exit(1);
     }
     
-    IGAScraper.search(query)
-        .then(results => {
-            if (results.length === 0) {
-                console.log("No products found using the API approach.");
+    if (firstArg.toLowerCase() === 'special') {
+        // Special products mode
+        let targetCount = 500;
+        if (process.argv[3]) {
+            const parsedCount = parseInt(process.argv[3]);
+            if (!isNaN(parsedCount)) {
+                targetCount = parsedCount;
+            } else {
+                console.log("Invalid target count, using default 500");
             }
-        })
-        .catch(error => {
-            console.error('Error:', error.message);
-            process.exit(1);
-        });
+        }
+        
+        console.log(`Fetching ${targetCount} IGA special products...`);
+        IGAScraper.fetchSpecial(targetCount)
+            .then(results => {
+                if (results.length === 0) {
+                    console.log("No special products found.");
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error.message);
+                process.exit(1);
+            });
+    } else {
+        // Regular search mode
+        const query = firstArg;
+        IGAScraper.search(query)
+            .then(results => {
+                if (results.length === 0) {
+                    console.log("No products found using the API approach.");
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error.message);
+                process.exit(1);
+            });
+    }
 }

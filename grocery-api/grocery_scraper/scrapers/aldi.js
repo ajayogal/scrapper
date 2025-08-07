@@ -211,12 +211,150 @@ class AldiScraper {
     // Utility method to get products with discount information
     async getDiscountedProducts(query, maxResults = 50, servicePoint = null) {
         const products = await this.searchProducts(query, maxResults, servicePoint);
-        return products.filter(product => product.discountPrice);
+        return products.filter(product => product.discountedPrice);
     }
 
     // Method to search by specific service point (store location)
     async searchByLocation(query, servicePoint, maxResults = 50) {
         return this.searchProducts(query, maxResults, servicePoint);
+    }
+
+    // Fetch all categories from the category tree API
+    async fetchCategories() {
+        try {
+            const categoriesUrl = 'https://api.aldi.com.au/v2/product-category-tree';
+            const response = await axios.get(categoriesUrl);
+
+            if (response.status !== 200) {
+                console.error(`Failed to fetch categories: HTTP ${response.status}`);
+                return [];
+            }
+
+            const data = response.data;
+            return this.extractCategories(data.data || data);
+        } catch (error) {
+            console.error('Error fetching categories:', error.message);
+            return [];
+        }
+    }
+
+    // Extract category keys and names from the API response
+    extractCategories(data) {
+        const categoryKeys = [];
+        
+        for (const category of data) {
+            const categoryKey = category.key;
+            const categoryName = category.name;
+            
+            if (categoryKey) {
+                categoryKeys.push({ key: categoryKey, name: categoryName });
+            }
+            
+            console.log(`Category: ${categoryName}`);
+        }
+        
+        return categoryKeys;
+    }
+
+    // Fetch special products from all categories
+    async fetchSpecialProducts(servicePoint = null, limit = 16) {
+        try {
+            const actualServicePoint = servicePoint || this.defaultServicePoint;
+            
+            console.log('Fetching categories...');
+            const categories = await this.fetchCategories();
+            
+            // Filter out unwanted categories
+            const excludedCategories = ['Liquor', 'Cleaning & Household', 'Baby', 'Drinks', 'Pets'];
+            const filteredCategories = categories.filter(cat => 
+                !excludedCategories.includes(cat.name)
+            );
+            
+            console.log(`Found ${categories.length} categories`);
+            console.log(`Found ${filteredCategories.length} categories after filtering`);
+            
+            const allProducts = [];
+            
+            // Fetch products for each category
+            for (const category of filteredCategories) {
+                console.log(`Fetching products for category: ${category.name}`);
+                
+                const categoryProducts = await this.fetchProductsByCategory(
+                    category.key, 
+                    category.name, 
+                    actualServicePoint, 
+                    limit
+                );
+                
+                allProducts.push(...categoryProducts);
+                
+                console.log(`  Found ${categoryProducts.length} products`);
+                
+                // Respectful delay between API calls
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            return this.sortProductsByPrice(allProducts);
+        } catch (error) {
+            console.error('Error fetching special products:', error.message);
+            throw error;
+        }
+    }
+
+    // Fetch products for a specific category
+    async fetchProductsByCategory(categoryKey, categoryName, servicePoint, limit = 16) {
+        try {
+            const productsUrl = 'https://api.aldi.com.au/v3/product-search';
+            const params = {
+                currency: 'AUD',
+                serviceType: 'walk-in',
+                categoryKey: categoryKey,
+                limit: limit,
+                offset: 0,
+                sort: 'price',
+                testVariant: 'A',
+                servicePoint: servicePoint
+            };
+
+            const response = await axios.get(productsUrl, { params });
+            
+            if (response.status !== 200) {
+                console.error(`Failed to fetch products for category ${categoryName}: HTTP ${response.status}`);
+                return [];
+            }
+
+            const data = response.data;
+            const products = [];
+
+            if (data.data && data.data.length > 0) {
+                for (const item of data.data) {
+                    const product = this.parseProductWithCategory(item, categoryKey, categoryName);
+                    if (product) {
+                        products.push(product);
+                    }
+                }
+            }
+
+            return products;
+        } catch (error) {
+            console.error(`Error fetching products for category ${categoryName}:`, error.message);
+            return [];
+        }
+    }
+
+    // Parse product with category information
+    parseProductWithCategory(item, categoryKey, categoryName) {
+        try {
+            const product = this.parseProduct(item);
+            if (product) {
+                product.categoryKey = categoryKey;
+                product.categoryName = categoryName;
+            }
+            return product;
+        } catch (error) {
+            console.error('Error parsing product with category:', error);
+            return null;
+        }
     }
 }
 

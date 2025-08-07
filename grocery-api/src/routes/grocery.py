@@ -47,7 +47,8 @@ def get_store_logo_url(store_name, api_base_url=None):
         'coles': 'coles.png', 
         'woolworths': 'woolworths.png',
         'iga': 'iga.png',
-        'harris': 'harris.png'
+        'harris': 'harris.png',
+        'harris farm markets': 'harris.png'
     }
     
     # Get logo filename, default to default-store.png if not found

@@ -1208,14 +1208,14 @@ def search_store_products(store_name):
             dietary_search_terms = {
                 'none': [
                     # General groceries - any food items (non-veg and veg)
-                    'bread', 'milk', 'eggs', 'chicken', 'beef', 'rice', 'pasta', 'cheese', 'butter',
-                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'fruit', 'dairy',
+                    'milk', 'eggs', 'chicken', 'rice', 'pasta', 'cheese', 'butter',
+                    'yogurt', 'fruit', 'vegetables', 'meat', 'dairy',
                     'grocery',
                 ],  
                 'vegetarian': [
-                    'vegetarian protein', 'tofu', 'tempeh', 'beans', 'lentils', 'chickpeas',
+                    'vegetarian protein', 'tofu', 'beans', 'lentils',
                     'quinoa', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
-                    'vegetarian cheese', 'falafel', 'hummus'
+                    'vegetarian cheese'
                 ],
                 'vegan': [
                     'vegan protein', 'tofu', 'tempeh', 'vegan cheese', 'milk', 'yeast', 'yogurt', 'agave', 'maple syrup', 'cashew cream'
@@ -1225,7 +1225,7 @@ def search_store_products(store_name):
                 ],
                 'others': [
                     'bread', 'milk', 'eggs', 'rice', 'pasta', 
-                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 'fish', 'fruit', 'dairy',
+                    'yogurt', 'cereal', 'fruit', 'vegetables', 'meat', 
                     'grocery',
                 ]
             }

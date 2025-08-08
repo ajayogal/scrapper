@@ -8,6 +8,7 @@ import time
 import sys
 import logging
 import random
+import shutil
 
 # Import the Python scrapers from local scrapers module
 try:
@@ -190,8 +191,27 @@ def run_node_scraper(query, store='all', max_results=200):
         if not grocery_scraper_path:
             return {"error": f"Could not find grocery_scraper directory. Tried: {possible_paths}"}
         
+        # Get the full path to node executable
+        node_path = shutil.which('node')
+        if not node_path:
+            # Fallback paths for node
+            possible_node_paths = [
+                '/usr/bin/node',
+                '/usr/local/bin/node',
+                '/home/ec2-user/.nvm/versions/node/v20.19.4/bin/node'
+            ]
+            for path in possible_node_paths:
+                if os.path.exists(path):
+                    node_path = path
+                    break
+            
+            if not node_path:
+                return {"error": "Could not find node executable"}
+        
+        log_and_print(f"Using node at: {node_path}")
+        
         # Prepare the command to run the Node.js scraper
-        cmd = ['node', 'index.js', 'search', query]
+        cmd = [node_path, 'index.js', 'search', query]
         
         if store != 'all':
             cmd.extend([store, str(max_results)])
@@ -204,13 +224,19 @@ def run_node_scraper(query, store='all', max_results=200):
         # Log the exact command being run
         log_and_print(f"Running command: {' '.join(cmd)} in directory: {grocery_scraper_path}")
         
-        # Run the Node.js script
+        # Set up proper environment
+        env = os.environ.copy()
+        env['PATH'] = f"/home/ec2-user/.nvm/versions/node/v20.19.4/bin:{env.get('PATH', '')}"
+        env['NODE_PATH'] = f"{grocery_scraper_path}/node_modules"
+        
+        # Run the Node.js script with proper environment
         result = subprocess.run(
             cmd,
             cwd=grocery_scraper_path,
             capture_output=True,
             text=True,
-            timeout=60  # 60 second timeout
+            timeout=90,  # Increase timeout to 90 seconds
+            env=env      # Pass the environment
         )
         
         # Log subprocess results for debugging
@@ -243,7 +269,7 @@ def run_node_scraper(query, store='all', max_results=200):
             return {"error": f"Scraper failed with return code {result.returncode}", "stdout": result.stdout, "stderr": result.stderr}
     
     except subprocess.TimeoutExpired:
-        return {"error": "Scraper timed out after 60 seconds"}
+        return {"error": "Scraper timed out after 90 seconds"}
     except Exception as e:
         return {"error": f"Failed to run scraper: {str(e)}"}
 

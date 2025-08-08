@@ -471,6 +471,38 @@ def clear_cache():
         'cache_entries': len(search_cache)
     })
 
+@grocery_bp.route('/test-scraper', methods=['POST'])
+@cross_origin()
+def test_scraper():
+    """Test Node.js scraper directly for debugging"""
+    try:
+        data = request.get_json()
+        query = data.get('query', 'milk')
+        store = data.get('store', 'iga')
+        
+        log_and_print(f"Testing Node.js scraper with query='{query}', store='{store}'")
+        
+        # Test the Node.js scraper directly
+        result = run_node_scraper(query, store, max_results=5)
+        
+        return jsonify({
+            'success': True,
+            'test_query': query,
+            'test_store': store,
+            'scraper_result': result,
+            'result_type': type(result).__name__,
+            'has_products': 'products' in result if isinstance(result, dict) else False,
+            'product_count': len(result.get('products', [])) if isinstance(result, dict) and 'products' in result else 0
+        })
+        
+    except Exception as e:
+        log_and_print(f"Error in test_scraper: {e}", 'error')
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'error_type': type(e).__name__
+        }), 500
+
 def search_all_stores(search_keys, max_results_per_store=50, selected_stores=None):
     """Search selected stores (or all available stores) for the given search keys"""
     if selected_stores is None or len(selected_stores) == 0:

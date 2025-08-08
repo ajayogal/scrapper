@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_cors import cross_origin
-import subprocess
+# subprocess import removed - no longer needed for Node.js scraper
 import json
 import os
 import hashlib
@@ -8,21 +8,24 @@ import time
 import sys
 import logging
 import random
-import shutil
+# shutil import removed - no longer needed for Node.js scraper
 
-# Import the Python scrapers from local scrapers module
+# Import the Python scraper modules
 try:
-    from src.scrapers import (
-        fetch_aldi_products_with_discount, 
-        aldi_parse_price,
-        fetch_iga_products, 
-        iga_parse_price
-    )
+    # Try relative import first
+    from ..scrapers import aldi_scrapper, iga_scrapper
     PYTHON_SCRAPERS_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Could not import Python scrapers: {e}")
-    print("Falling back to Node.js scrapers")
-    PYTHON_SCRAPERS_AVAILABLE = False
+except ImportError:
+    try:
+        # Try absolute import if relative fails
+        from scrapers import aldi_scrapper, iga_scrapper
+        PYTHON_SCRAPERS_AVAILABLE = True
+    except ImportError as e:
+        print(f"Warning: Could not import Python scrapers: {e}")
+        print("Python scrapers not available")
+        aldi_scrapper = None
+        iga_scrapper = None
+        PYTHON_SCRAPERS_AVAILABLE = False
 
 grocery_bp = Blueprint('grocery', __name__)
 
@@ -107,28 +110,13 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
         query (str): Search query
         store (str or list): Store name(s) to search - 'all', 'aldi', 'iga', ['aldi', 'iga'], etc.
         max_results (int): Maximum results per store
-        timeout_seconds (int): Timeout for each scraper call
+        timeout_seconds (int): Timeout for each scraper call (not implemented in Flask threads)
     
     Returns:
         dict: {'products': [...]} or {'error': 'error message'}
     """
-    import signal
-    from contextlib import contextmanager
-    
-    @contextmanager
-    def timeout_handler(seconds):
-        """Context manager for handling timeouts"""
-        def signal_handler(signum, frame):
-            raise TimeoutError(f"Operation timed out after {seconds} seconds")
-        
-        # Set the signal handler and a alarm for timeout
-        old_handler = signal.signal(signal.SIGALRM, signal_handler)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)  # Disable the alarm
-            signal.signal(signal.SIGALRM, old_handler)
+    # Note: signal-based timeout doesn't work in Flask threads, so we'll skip timeout for now
+    # This could be implemented with threading.Timer or multiprocessing if needed
     
     def normalize_store_names(store_param):
         """Convert store parameter to list of normalized store names"""
@@ -171,7 +159,7 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
                 'price': display_price,
                 'discountedPrice': discount_price if discount_price else '',
                 'discount': discount_text,
-                'numericPrice': aldi_parse_price(current_price),
+                'numericPrice': aldi_scrapper.aldi_parse_price(current_price) if aldi_scrapper else 0,
                 'inStock': True,
                 'unitPrice': '',  # Not available in ALDI API
                 'imageUrl': product.get('imageUrl', product.get('image', '')),
@@ -206,7 +194,7 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
                 'price': str(current_price),
                 'discountedPrice': original_price if original_price else discount_price,
                 'discount': discount_text,
-                'numericPrice': iga_parse_price(str(current_price)),
+                'numericPrice': iga_scrapper.iga_parse_price(str(current_price)) if iga_scrapper else 0,
                 'inStock': product.get('available', True),
                 'unitPrice': product.get('unitPrice', product.get('pricePerUnit', '')),
                 'imageUrl': product.get('image', product.get('imageUrl', '')),
@@ -228,15 +216,14 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
         log_and_print(f"Python scrapers starting for query '{query}' in stores: {stores_to_search}")
         
         # Scrape ALDI if requested
-        if 'aldi' in stores_to_search:
+        if 'aldi' in stores_to_search and aldi_scrapper:
             try:
                 log_and_print(f"Scraping ALDI Python API for: {query}")
                 
-                with timeout_handler(timeout_seconds):
-                    aldi_products = fetch_aldi_products_with_discount(
-                        query, 
-                        limit=min(max_results, 100)
-                    )
+                aldi_products = aldi_scrapper.fetch_aldi_products_with_discount(
+                    query, 
+                    limit=min(max_results, 100)
+                )
                 
                 if aldi_products:
                     log_and_print(f"ALDI returned {len(aldi_products)} raw products")
@@ -252,10 +239,6 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
                     log_and_print("ALDI Python API returned no products - API may have restrictions")
                     scraper_errors.append("ALDI: API returned no products (possible API changes or restrictions)")
                     
-            except TimeoutError:
-                error_msg = f"ALDI scraper timed out after {timeout_seconds} seconds"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"ALDI: {error_msg}")
             except Exception as e:
                 error_msg = f"ALDI scraper failed: {str(e)}"
                 log_and_print(error_msg, 'error')
@@ -263,15 +246,14 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
                 # Note: ALDI API may have changed or require additional authentication
         
         # Scrape IGA if requested
-        if 'iga' in stores_to_search:
+        if 'iga' in stores_to_search and iga_scrapper:
             try:
                 log_and_print(f"Scraping IGA Python API for: {query}")
                 
-                with timeout_handler(timeout_seconds):
-                    iga_products = fetch_iga_products(
-                        query, 
-                        limit=min(max_results, 100)
-                    )
+                iga_products = iga_scrapper.fetch_iga_products(
+                    query, 
+                    limit=min(max_results, 100)
+                )
                 
                 if iga_products:
                     log_and_print(f"IGA returned {len(iga_products)} raw products")
@@ -286,10 +268,6 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
                 else:
                     log_and_print("IGA returned no products")
                     
-            except TimeoutError:
-                error_msg = f"IGA scraper timed out after {timeout_seconds} seconds"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"IGA: {error_msg}")
             except Exception as e:
                 error_msg = f"IGA scraper failed: {str(e)}"
                 log_and_print(error_msg, 'error')
@@ -324,114 +302,7 @@ def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30)
         log_and_print(error_msg, 'error')
         return {"error": error_msg}
 
-def run_node_scraper(query, store='all', max_results=200):
-    """Run the Node.js scraper using subprocess"""
-    try:
-        log_and_print(f"LN-124: Running Node.js scraper for: {query}")
-        # Get the path to the grocery_scraper directory with multiple fallbacks
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Try multiple possible paths for the grocery_scraper directory
-        possible_paths = [
-            '/home/ec2-user/apps/scrapper/grocery-api/grocery_scraper',  # Exact production path
-            os.path.join(current_dir, '..', '..', 'grocery_scraper'),   # Original development path
-            os.path.join(current_dir, '..', 'grocery_scraper'),         # One level up
-            os.path.join(os.path.dirname(current_dir), 'grocery_scraper'),  # Same level as src
-            '/app/grocery_scraper',      # Docker production path
-            './grocery_scraper',         # Relative path
-        ]
-        
-        grocery_scraper_path = None
-        for path in possible_paths:
-            if os.path.exists(path) and os.path.isfile(os.path.join(path, 'index.js')):
-                grocery_scraper_path = path
-                log_and_print(f"Found grocery_scraper at: {path}")
-                break
-        
-        if not grocery_scraper_path:
-            return {"error": f"Could not find grocery_scraper directory. Tried: {possible_paths}"}
-        
-        # Get the full path to node executable
-        node_path = shutil.which('node')
-        if not node_path:
-            # Fallback paths for node
-            possible_node_paths = [
-                '/usr/bin/node',
-                '/usr/local/bin/node',
-                '/home/ec2-user/.nvm/versions/node/v20.19.4/bin/node'
-            ]
-            for path in possible_node_paths:
-                if os.path.exists(path):
-                    node_path = path
-                    break
-            
-            if not node_path:
-                return {"error": "Could not find node executable"}
-        
-        log_and_print(f"Using node at: {node_path}")
-        
-        # Prepare the command to run the Node.js scraper
-        cmd = [node_path, 'index.js', 'search', query]
-        
-        if store != 'all':
-            cmd.extend([store, str(max_results)])
-        else:
-            cmd.append(str(max_results))
-            
-        # Add JSON flag for API usage
-        cmd.append('--json')
-        
-        # Log the exact command being run
-        log_and_print(f"Running command: {' '.join(cmd)} in directory: {grocery_scraper_path}")
-        
-        # Set up proper environment
-        env = os.environ.copy()
-        env['PATH'] = f"/home/ec2-user/.nvm/versions/node/v20.19.4/bin:{env.get('PATH', '')}"
-        env['NODE_PATH'] = f"{grocery_scraper_path}/node_modules"
-        
-        # Run the Node.js script with proper environment
-        result = subprocess.run(
-            cmd,
-            cwd=grocery_scraper_path,
-            capture_output=True,
-            text=True,
-            timeout=90,  # Increase timeout to 90 seconds
-            env=env      # Pass the environment
-        )
-        
-        # Log subprocess results for debugging
-        log_and_print(f"Subprocess return code: {result.returncode}")
-        if result.stdout:
-            log_and_print(f"Subprocess stdout: {result.stdout[:500]}...")  # First 500 chars
-        if result.stderr:
-            log_and_print(f"Subprocess stderr: {result.stderr}")
-        
-        if result.returncode == 0:
-            # Parse the JSON output from the Node.js script
-            try:
-                output_lines = result.stdout.strip().split('\n')
-                # Find the last line that looks like JSON (in case there are other log messages)
-                json_output = None
-                for line in reversed(output_lines):
-                    try:
-                        json_output = json.loads(line)
-                        break
-                    except json.JSONDecodeError:
-                        continue
-                
-                if json_output:
-                    return json_output
-                else:
-                    return {"error": "No valid JSON output from scraper", "stdout": result.stdout, "stderr": result.stderr}
-            except json.JSONDecodeError as e:
-                return {"error": f"Failed to parse JSON output: {e}", "stdout": result.stdout, "stderr": result.stderr}
-        else:
-            return {"error": f"Scraper failed with return code {result.returncode}", "stdout": result.stdout, "stderr": result.stderr}
-    
-    except subprocess.TimeoutExpired:
-        return {"error": "Scraper timed out after 90 seconds"}
-    except Exception as e:
-        return {"error": f"Failed to run scraper: {str(e)}"}
+# Note: Node.js scraper function removed - now using Python scrapers only
 
 @grocery_bp.route('/search', methods=['POST'])
 @cross_origin()
@@ -449,10 +320,10 @@ def search_products():
         
         store = data.get('store', 'all').lower()
         # Validate store parameter
-        valid_stores = ['all', 'aldi', 'iga', 'woolworths', 'coles', 'harris']
-        if store not in valid_stores:
+        valid_stores = ['aldi', 'iga']  # Both stores supported via Python scrapers
+        if store not in valid_stores and store != 'all':
             return jsonify({
-                'error': f'Invalid store "{store}". Supported stores: {", ".join(valid_stores)}'
+                'error': f'Invalid store "{store}". Supported stores: {", ".join(valid_stores)} or "all"'
             }), 400
         
         page = data.get('page', 1)
@@ -486,35 +357,29 @@ def search_products():
                 else:
                     log_and_print("Python scrapers returned no products")
             
-            # Use Python scrapers for IGA, Node.js for others (including ALDI due to API issues)
+            # Use Python scrapers for ALDI and IGA
             if not scraper_result.get('products'):
-                # For IGA, try Python scraper first (working well)
-                if store in ['iga', 'all']:
-                    log_and_print("Using Python scraper for IGA store")
-                    python_result = run_python_scrapers(query, ['iga'], max_results=200)
+                # Determine which stores to scrape
+                stores_to_scrape = []
+                if store == 'all':
+                    stores_to_scrape = ['aldi', 'iga']
+                elif store in ['aldi', 'iga']:
+                    stores_to_scrape = [store]
+                
+                if stores_to_scrape:
+                    log_and_print(f"Using Python scrapers for stores: {stores_to_scrape}")
+                    python_result = run_python_scrapers(query, stores_to_scrape, max_results=200)
                     
                     if 'error' not in python_result and python_result.get('products'):
                         scraper_result = python_result
-                        log_and_print(f"IGA Python scraper returned {len(python_result['products'])} products")
+                        log_and_print(f"Python scrapers returned {len(python_result['products'])} products")
                     else:
-                        log_and_print(f"IGA Python scraper failed: {python_result.get('error', 'No products')}")
-                
-                # For ALDI, Woolworths, Coles, Harris - use Node.js scrapers
-                if (not scraper_result.get('products') and 
-                    store in ['aldi', 'woolworths', 'coles', 'harris', 'all']):
-                    
-                    log_and_print("Using Node.js scraper for ALDI/Woolworths/Coles/Harris stores")
-                    node_result = run_node_scraper(query, store, max_results=50)
-                    
-                    if 'error' not in node_result:
-                        # Merge with existing Python results if any
-                        existing_products = scraper_result.get('products', [])
-                        node_products = node_result.get('products', [])
-                        scraper_result = {'products': existing_products + node_products}
-                    else:
-                        # If Node.js failed and no Python results, use the Node.js error
-                        if not scraper_result.get('products'):
-                            scraper_result = node_result
+                        log_and_print(f"Python scrapers failed or returned no products: {python_result.get('error', 'No products')}")
+                        # If we have warnings but no error, check if it's just ALDI API issues
+                        if python_result.get('warnings') and not python_result.get('error'):
+                            scraper_result = python_result  # Return what we have, even if empty
+                        else:
+                            scraper_result = {"error": f"No products found for {store}. {python_result.get('error', '')}"}
 
             if 'error' in scraper_result:
                 return jsonify({
@@ -596,65 +461,28 @@ def search_products():
 def get_stores():
     """Get list of supported stores"""
     stores = [
-        {'id': 'all', 'name': 'All Stores'},
-        {'id': 'woolworths', 'name': 'Woolworths'},
-        {'id': 'coles', 'name': 'Coles'},
-        {'id': 'harris', 'name': 'Harris Farm Markets'},
+        {'id': 'aldi', 'name': 'ALDI'},
         {'id': 'iga', 'name': 'IGA'},
-        {'id': 'aldi', 'name': 'Aldi'},
-        {'id': 'iga-py', 'name': 'IGA (Python)'},
-        {'id': 'aldi-py', 'name': 'Aldi (Python)'},
     ]
     
     return jsonify({
         'success': True,
-        'stores': stores
+        'stores': stores,
+        'message': 'Both ALDI and IGA are supported via Python scrapers (ALDI may have API limitations)'
     })
 
 @grocery_bp.route('/health', methods=['GET'])
 @cross_origin()
 def health_check():
     """Health check endpoint"""
-    # Test grocery_scraper path resolution
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    possible_paths = [
-        '/home/ec2-user/apps/scrapper/grocery-api/grocery_scraper',  # Exact production path
-        os.path.join(current_dir, '..', '..', 'grocery_scraper'),   # Original development path
-        os.path.join(current_dir, '..', 'grocery_scraper'),         # One level up
-        os.path.join(os.path.dirname(current_dir), 'grocery_scraper'),  # Same level as src
-        '/app/grocery_scraper',      # Docker production path
-        './grocery_scraper',         # Relative path
-    ]
-    
-    found_paths = []
-    grocery_scraper_found = False
-    
-    for path in possible_paths:
-        if os.path.exists(path):
-            index_js_exists = os.path.isfile(os.path.join(path, 'index.js'))
-            found_paths.append({
-                'path': path,
-                'exists': True,
-                'index_js_exists': index_js_exists
-            })
-            if index_js_exists:
-                grocery_scraper_found = True
-        else:
-            found_paths.append({
-                'path': path,
-                'exists': False,
-                'index_js_exists': False
-            })
     
     return jsonify({
         'success': True,
         'status': 'healthy',
         'python_scrapers_available': PYTHON_SCRAPERS_AVAILABLE,
-        'python_scrapers_stores': ['iga'] if PYTHON_SCRAPERS_AVAILABLE else [],
-        'node_scraper_available': grocery_scraper_found,
-        'node_scraper_stores': ['aldi', 'woolworths', 'coles', 'harris'] if grocery_scraper_found else [],
-        'scraper_priority': 'Python scraper for IGA only, Node.js for ALDI/Woolworths/Coles/Harris (ALDI Python API has issues)',
-        'grocery_scraper_path_check': found_paths,
+        'supported_stores': ['aldi', 'iga'] if PYTHON_SCRAPERS_AVAILABLE else [],
+        'scraper_info': 'Using Python scrapers for both ALDI and IGA. Node.js scrapers have been removed.',
         'current_directory': current_dir,
         'cache_entries': len(search_cache),
         'cache_keys': list(search_cache.keys())
@@ -676,21 +504,21 @@ def clear_cache():
 @grocery_bp.route('/test-scraper', methods=['POST'])
 @cross_origin()
 def test_scraper():
-    """Test Node.js scraper directly for debugging"""
+    """Test Python scraper directly for debugging"""
     try:
         data = request.get_json()
         query = data.get('query', 'milk')
         store = data.get('store', 'iga')
         
-        log_and_print(f"Testing Node.js scraper with query='{query}', store='{store}'")
+        log_and_print(f"Testing Python scraper with query='{query}', store='{store}'")
         
-        # Test the appropriate scraper based on store
+        # Only IGA is supported
         if store == 'iga':
             log_and_print(f"Testing Python scraper for {store}")
             result = run_python_scrapers(query, ['iga'], max_results=5)
         else:
-            log_and_print(f"Testing Node.js scraper for {store}")
-            result = run_node_scraper(query, store, max_results=5)
+            log_and_print(f"Store '{store}' is not supported")
+            result = {"error": f"Store '{store}' is not supported. Only IGA is available."}
         
         return jsonify({
             'success': True,
@@ -699,7 +527,8 @@ def test_scraper():
             'scraper_result': result,
             'result_type': type(result).__name__,
             'has_products': 'products' in result if isinstance(result, dict) else False,
-            'product_count': len(result.get('products', [])) if isinstance(result, dict) and 'products' in result else 0
+            'product_count': len(result.get('products', [])) if isinstance(result, dict) and 'products' in result else 0,
+            'supported_stores': ['iga']
         })
         
     except Exception as e:
@@ -711,70 +540,36 @@ def test_scraper():
         }), 500
 
 def search_all_stores(search_keys, max_results_per_store=50, selected_stores=None):
-    """Search selected stores (or all available stores) for the given search keys"""
+    """Search ALDI and IGA stores for the given search keys"""
     if selected_stores is None or len(selected_stores) == 0:
-        # Default to all stores if none specified
-        search_stores = ['all']
-        use_python_scrapers = True
-        use_node_scrapers = True
+        # Default to both supported stores
+        search_stores = ['aldi', 'iga']
     else:
-        # Use only selected stores
-        search_stores = selected_stores
-        
-        # Determine which scrapers to use based on selected stores
-        python_store_ids = ['aldi-py', 'iga-py']
-        node_store_ids = ['woolworths', 'coles', 'harris', 'iga', 'aldi']
-        
-        use_python_scrapers = any(store in python_store_ids for store in selected_stores)
-        use_node_scrapers = any(store in node_store_ids for store in selected_stores)
-        
-        # If 'all' is in selected stores, enable both scrapers
+        # Only keep supported stores from selected stores
+        search_stores = [store for store in selected_stores if store in ['aldi', 'iga', 'all']]
         if 'all' in selected_stores:
-            use_python_scrapers = True
-            use_node_scrapers = True
+            search_stores = ['aldi', 'iga']
+        elif not search_stores:
+            log_and_print("No supported stores in selection. ALDI and IGA are supported.", 'warning')
+            return []
     
     all_products = []
     
     for search_key in search_keys:
         log_and_print(f"Searching stores {search_stores} for: {search_key}")
         
-        # Use Python scrapers for IGA only (ALDI has API issues)
-        if 'all' in search_stores or any(store in ['iga', 'iga-py'] for store in search_stores):
-            if PYTHON_SCRAPERS_AVAILABLE:
-                log_and_print(f"Using Python scraper for IGA store")
-                python_result = run_python_scrapers(search_key, ['iga'], max_results_per_store)
-                
-                if 'products' in python_result:
-                    all_products.extend(python_result['products'])
-                    log_and_print(f"IGA Python scraper added {len(python_result['products'])} products")
-                elif 'error' in python_result:
-                    log_and_print(f"IGA Python scraper failed: {python_result['error']}", 'warning')
-        
-        # Use Node.js scrapers for ALDI, Woolworths, Coles, Harris Farm stores
-        if 'all' in search_stores or any(store in ['aldi', 'woolworths', 'coles', 'harris'] for store in search_stores):
-            # Determine which stores to scrape with Node.js
-            if 'all' in search_stores:
-                node_stores_to_search = ['aldi', 'woolworths', 'coles', 'harris']
-            else:
-                node_stores_to_search = [store for store in search_stores if store in ['aldi', 'woolworths', 'coles', 'harris']]
+        # Use Python scrapers for supported stores
+        if PYTHON_SCRAPERS_AVAILABLE:
+            log_and_print(f"Using Python scrapers for stores: {search_stores}")
+            python_result = run_python_scrapers(search_key, search_stores, max_results_per_store)
             
-            if node_stores_to_search:
-                log_and_print(f"Using Node.js scrapers for stores: {node_stores_to_search}")
-                # For multiple stores, call each individually and combine
-                node_result = {'products': []}
-                for store in node_stores_to_search:
-                    store_result = run_node_scraper(search_key, store, max_results_per_store)
-                    if 'products' in store_result:
-                        node_result['products'].extend(store_result['products'])
-                        log_and_print(f"Node.js scraper for {store} added {len(store_result['products'])} products")
-                    elif isinstance(store_result, list):
-                        node_result['products'].extend(store_result)
-                        log_and_print(f"Node.js scraper for {store} added {len(store_result)} products")
-                    elif 'error' in store_result:
-                        log_and_print(f"Node.js scraper for {store} failed: {store_result['error']}", 'warning')
-                
-                if node_result['products']:
-                    all_products.extend(node_result['products'])
+            if 'products' in python_result:
+                all_products.extend(python_result['products'])
+                log_and_print(f"Python scrapers added {len(python_result['products'])} products")
+            elif 'error' in python_result:
+                log_and_print(f"Python scrapers failed: {python_result['error']}", 'warning')
+        else:
+            log_and_print("Python scrapers not available", 'error')
     
     # Remove duplicates based on title and store
     seen = set()
@@ -1408,7 +1203,6 @@ def search_store_products(store_name):
         per_page = data.get('perPage', 10)
         
         # Define search terms for different dietary preferences
-        
         if(store_name in ['iga', 'aldi']):
             max_results = 10
             dietary_search_terms = {
@@ -1463,7 +1257,7 @@ def search_store_products(store_name):
         
         # Validate store name
         store_name = store_name.lower().strip()
-        valid_stores = ['aldi', 'iga', 'woolworths', 'coles', 'harris']
+        valid_stores = ['aldi', 'iga']
         if store_name not in valid_stores:
             return jsonify({
                 'error': f'Invalid store "{store_name}". Supported stores: {", ".join(valid_stores)}'
@@ -1482,13 +1276,14 @@ def search_store_products(store_name):
                 
             log_and_print(f"Searching {store_name} for: {search_term}")
             
-            # Use Python scraper for IGA only, Node.js for others (including ALDI due to API issues)
-            if store_name == 'iga':
+            # Use Python scrapers for supported stores
+            if store_name in ['aldi', 'iga']:
                 log_and_print(f"Using Python scraper for {store_name}")
-                scraper_result = run_python_scrapers(search_term, ['iga'], max_results)
+                scraper_result = run_python_scrapers(search_term, [store_name], max_results)
             else:
-                log_and_print(f"Using Node.js scraper for {store_name}")
-                scraper_result = run_node_scraper(search_term, store_name, max_results)
+                # This shouldn't happen due to validation, but just in case
+                log_and_print(f"Store '{store_name}' is not supported")
+                scraper_result = {"error": f"Store '{store_name}' is not supported"}
             
             if 'error' in scraper_result:
                 log_and_print(f"Error searching for {search_term} in {store_name}: {scraper_result['error']}", 'error')

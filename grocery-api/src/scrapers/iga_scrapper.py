@@ -301,9 +301,29 @@ def fetch_iga_special_products(limit_per_page=100, target_products=500, store_id
     return products
 
 # Assuming products is a list of dicts with a 'price' key as string like '$1.99'
-def parse_price(price_str):
+def iga_parse_price(price_str):
     # Converts '$1.99' to float 1.99
     return float(price_str.replace('$', '')) if price_str else float('inf')
+
+def parse_price(price_str):
+    # Converts '$1.99' to float 1.99 (alias for backwards compatibility)
+    return iga_parse_price(price_str)
+
+def scrape_iga(query, limit=100):
+    """Main method to scrape IGA for products"""
+    print(f"Searching IGA for: '{query}'")
+    results = fetch_iga_products(query, limit)
+    print(f"Fetched {len(results)} products for query: '{query}'")
+    
+    if results:
+        try:
+            sorted_products = sorted(results, key=lambda x: iga_parse_price(str(x.get('price', '999'))))
+        except:
+            sorted_products = results
+        return sorted_products
+    else:
+        print("No products found using the API approach.")
+        return []
 
 def use_browser_scraper_alternative(query):
     """

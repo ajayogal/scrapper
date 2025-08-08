@@ -2,7 +2,14 @@ import requests
 import time
 import sys
 
-def fetch_aldi_products_with_discount(query, limit=20, service_point='G452'):
+def fetch_aldi_products_with_discount(query, limit=24, service_point='G452'):
+    # ALDI API only accepts specific limit values
+    valid_limits = [12, 16, 24, 30, 32, 48, 60]
+    if limit not in valid_limits:
+        # Find the closest valid limit
+        limit = min(valid_limits, key=lambda x: abs(x - limit))
+        print(f"Adjusted limit to {limit} (ALDI API requirement)")
+    
     base_url = "https://api.aldi.com.au/v3/product-search"
     offset = 0
     products = []
@@ -187,9 +194,26 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
     
     return all_products
 
-def parse_price(price_str):
+def aldi_parse_price(price_str):
     # Converts '$1.99' to float 1.99
     return float(price_str.replace('$', '')) if price_str else float('inf')
+
+def parse_price(price_str):
+    # Converts '$1.99' to float 1.99 (alias for backwards compatibility)
+    return aldi_parse_price(price_str)
+
+def scrape_aldi(query, limit=24):
+    """Main method to scrape ALDI for products"""
+    print(f"Searching ALDI for: '{query}'")
+    results = fetch_aldi_products_with_discount(query, limit)
+    print(f"Fetched {len(results)} products for query: '{query}'")
+    
+    if results:
+        sorted_products = sorted(results, key=lambda x: aldi_parse_price(x['price']))
+        return sorted_products
+    else:
+        print("No products found.")
+        return []
 
 # Usage example
 if __name__ == '__main__':

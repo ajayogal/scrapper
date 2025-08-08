@@ -99,230 +99,70 @@ def is_cache_valid(cache_entry):
     """Check if cache entry is still valid"""
     return time.time() - cache_entry['timestamp'] < CACHE_DURATION
 
-def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30):
-    """
-    Run the Python scrapers for ALDI and IGA with improved error handling and store support
-    
-    Args:
-        query (str): Search query
-        store (str or list): Store name(s) to search - 'all', 'aldi', 'iga', ['aldi', 'iga'], etc.
-        max_results (int): Maximum results per store
-        timeout_seconds (int): Timeout for each scraper call
-    
-    Returns:
-        dict: {'products': [...]} or {'error': 'error message'}
-    """
-    import signal
-    from contextlib import contextmanager
-    
-    @contextmanager
-    def timeout_handler(seconds):
-        """Context manager for handling timeouts"""
-        def signal_handler(signum, frame):
-            raise TimeoutError(f"Operation timed out after {seconds} seconds")
-        
-        # Set the signal handler and a alarm for timeout
-        old_handler = signal.signal(signal.SIGALRM, signal_handler)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)  # Disable the alarm
-            signal.signal(signal.SIGALRM, old_handler)
-    
-    def normalize_store_names(store_param):
-        """Convert store parameter to list of normalized store names"""
-        if isinstance(store_param, list):
-            stores = store_param
-        elif store_param == 'all':
-            stores = ['aldi', 'iga']
-        else:
-            stores = [store_param]
-        
-        # Normalize store names and remove -py suffix
-        normalized = []
-        for s in stores:
-            s = s.lower().strip()
-            if s.endswith('-py'):
-                s = s[:-3]
-            if s in ['aldi', 'iga']:
-                normalized.append(s)
-        
-        return normalized
-    
-    def standardize_aldi_product(product):
-        """Convert ALDI product to standard format"""
-        try:
-            # Handle discount logic properly
-            current_price = product.get('price', '')
-            discount_price = product.get('discount_price', '')
-            
-            # If there's a discount_price, that's the original price and current price is discounted
-            if discount_price:
-                discount_text = f"Was {discount_price}"
-                display_price = current_price
-            else:
-                discount_text = ''
-                display_price = current_price
-            
-            return {
-                'title': product.get('name', '').strip(),
-                'store': 'Aldi',
-                'price': display_price,
-                'discountedPrice': discount_price if discount_price else '',
-                'discount': discount_text,
-                'numericPrice': aldi_parse_price(current_price),
-                'inStock': True,
-                'unitPrice': '',  # Not available in ALDI API
-                'imageUrl': product.get('imageUrl', product.get('image', '')),
-                'brand': product.get('brand', ''),
-                'category': product.get('categoryName', ''),
-                'productUrl': '',  # Not available in ALDI API
-                'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'scraper_source': 'python_aldi'
-            }
-        except Exception as e:
-            log_and_print(f"Error standardizing ALDI product {product}: {e}", 'error')
-            return None
-    
-    def standardize_iga_product(product):
-        """Convert IGA product to standard format"""
-        try:
-            # Handle IGA price structure
-            current_price = product.get('price', '')
-            discount_price = product.get('discount_price', '')
-            original_price = product.get('original_price', '')
-            
-            # Determine discount text
-            discount_text = ''
-            if original_price:
-                discount_text = f"Was {original_price}"
-            elif discount_price and discount_price != current_price:
-                discount_text = f"Was {discount_price}"
-            
-            return {
-                'title': product.get('name', '').strip(),
-                'store': 'IGA',
-                'price': str(current_price),
-                'discountedPrice': original_price if original_price else discount_price,
-                'discount': discount_text,
-                'numericPrice': iga_parse_price(str(current_price)),
-                'inStock': product.get('available', True),
-                'unitPrice': product.get('unitPrice', product.get('pricePerUnit', '')),
-                'imageUrl': product.get('image', product.get('imageUrl', '')),
-                'brand': product.get('brand', ''),
-                'category': '',  # Not readily available in IGA API
-                'productUrl': '',  # Not available in IGA API
-                'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'scraper_source': 'python_iga'
-            }
-        except Exception as e:
-            log_and_print(f"Error standardizing IGA product {product}: {e}", 'error')
-            return None
-    
+def run_python_scrapers(query, store='all', max_results=200):
+    """Run the Python scrapers for ALDI and IGA"""
     try:
         all_products = []
-        stores_to_search = normalize_store_names(store)
-        scraper_errors = []
         
-        log_and_print(f"Python scrapers starting for query '{query}' in stores: {stores_to_search}")
-        
-        # Scrape ALDI if requested
-        if 'aldi' in stores_to_search:
+        if store == 'all' or store == 'aldi-py':
             try:
-                log_and_print(f"Scraping ALDI Python API for: {query}")
+                log_and_print(f"LN-64: Scraping ALDI for: {query}")
+                aldi_products = fetch_aldi_products_with_discount(query, limit=min(max_results, 100))
                 
-                with timeout_handler(timeout_seconds):
-                    aldi_products = fetch_aldi_products_with_discount(
-                        query, 
-                        limit=min(max_results, 100)
-                    )
-                
-                if aldi_products:
-                    log_and_print(f"ALDI returned {len(aldi_products)} raw products")
+                # Convert ALDI products to standard format
+                for product in aldi_products:
+                    log_and_print(f"LN-69: Product: {product}")
+                    standardized_product = {
+                        'title': product.get('name', ''),
+                        'store': 'Aldi',
+                        'price': product.get('price', ''),
+                        'discountedPrice': product.get('discount_price', ''),
+                        'discount': f"Was {product.get('discount_price')}" if product.get('discount_price') else '',
+                        'numericPrice': aldi_parse_price(product.get('price', '0')),
+                        'inStock': True,  # Assume in stock if returned by API
+                        'unitPrice': '',  # Not available in ALDI scraper
+                        'imageUrl': product.get('image', ''),
+                        'brand': '',  # Extract from name if needed
+                        'category': '',  # Not available in ALDI scraper
+                        'productUrl': '',  # Not available in ALDI scraper
+                        'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                    }
+                    all_products.append(standardized_product)
                     
-                    # Convert to standard format
-                    for product in aldi_products:
-                        standardized = standardize_aldi_product(product)
-                        if standardized:
-                            all_products.append(standardized)
-                    
-                    log_and_print(f"ALDI: {len([p for p in all_products if p.get('store') == 'Aldi'])} products standardized")
-                else:
-                    log_and_print("ALDI Python API returned no products - API may have restrictions")
-                    scraper_errors.append("ALDI: API returned no products (possible API changes or restrictions)")
-                    
-            except TimeoutError:
-                error_msg = f"ALDI scraper timed out after {timeout_seconds} seconds"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"ALDI: {error_msg}")
             except Exception as e:
-                error_msg = f"ALDI scraper failed: {str(e)}"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"ALDI: {error_msg}")
-                # Note: ALDI API may have changed or require additional authentication
+                log_and_print(f"Error scraping ALDI: {e}", 'error')
         
-        # Scrape IGA if requested
-        if 'iga' in stores_to_search:
+        if store == 'all' or store == 'iga-py':
             try:
-                log_and_print(f"Scraping IGA Python API for: {query}")
+                log_and_print(f"LN-91: Scraping IGA for: {query}")
+                iga_products = fetch_iga_products(query, limit=min(max_results, 100))
                 
-                with timeout_handler(timeout_seconds):
-                    iga_products = fetch_iga_products(
-                        query, 
-                        limit=min(max_results, 100)
-                    )
-                
-                if iga_products:
-                    log_and_print(f"IGA returned {len(iga_products)} raw products")
+                # Convert IGA products to standard format
+                for product in iga_products:
+                    standardized_product = {
+                        'title': product.get('name', ''),
+                        'store': 'IGA',
+                        'price': str(product.get('price', '')),
+                        'discountedPrice': str(product.get('discount_price', '')) if product.get('discount_price') else '',
+                        'discount': f"Was {product.get('discount_price')}" if product.get('discount_price') else '',
+                        'numericPrice': iga_parse_price(str(product.get('price', '0'))),
+                        'inStock': True,  # Assume in stock if returned by API
+                        'unitPrice': '',  # Not available in IGA scraper
+                        'imageUrl': product.get('image', ''),
+                        'brand': '',  # Extract from name if needed
+                        'category': '',  # Not available in IGA scraper
+                        'productUrl': '',  # Not available in IGA scraper
+                        'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                    }
+                    all_products.append(standardized_product)
                     
-                    # Convert to standard format
-                    for product in iga_products:
-                        standardized = standardize_iga_product(product)
-                        if standardized:
-                            all_products.append(standardized)
-                    
-                    log_and_print(f"IGA: {len([p for p in all_products if p.get('store') == 'IGA'])} products standardized")
-                else:
-                    log_and_print("IGA returned no products")
-                    
-            except TimeoutError:
-                error_msg = f"IGA scraper timed out after {timeout_seconds} seconds"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"IGA: {error_msg}")
             except Exception as e:
-                error_msg = f"IGA scraper failed: {str(e)}"
-                log_and_print(error_msg, 'error')
-                scraper_errors.append(f"IGA: {error_msg}")
+                log_and_print(f"Error scraping IGA: {e}", 'error')
         
-        # Remove any None values from failed standardizations
-        all_products = [p for p in all_products if p is not None]
-        
-        # Sort by price (cheapest first)
-        try:
-            all_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
-        except Exception as e:
-            log_and_print(f"Error sorting products by price: {e}", 'warning')
-        
-        result = {
-            'products': all_products,
-            'total_products': len(all_products),
-            'stores_searched': stores_to_search,
-            'query': query
-        }
-        
-        # Add error information if there were any
-        if scraper_errors:
-            result['warnings'] = scraper_errors
-            log_and_print(f"Python scrapers completed with warnings: {scraper_errors}", 'warning')
-        
-        log_and_print(f"Python scrapers completed successfully: {len(all_products)} total products from {len(stores_to_search)} stores")
-        return result
+        return {'products': all_products}
         
     except Exception as e:
-        error_msg = f"Python scrapers failed completely: {str(e)}"
-        log_and_print(error_msg, 'error')
-        return {"error": error_msg}
+        return {"error": f"Failed to run Python scrapers: {str(e)}"}
 
 def run_node_scraper(query, store='all', max_results=200):
     """Run the Node.js scraper using subprocess"""
@@ -486,35 +326,22 @@ def search_products():
                 else:
                     log_and_print("Python scrapers returned no products")
             
-            # Use Python scrapers for IGA, Node.js for others (including ALDI due to API issues)
-            if not scraper_result.get('products'):
-                # For IGA, try Python scraper first (working well)
-                if store in ['iga', 'all']:
-                    log_and_print("Using Python scraper for IGA store")
-                    python_result = run_python_scrapers(query, ['iga'], max_results=200)
-                    
-                    if 'error' not in python_result and python_result.get('products'):
-                        scraper_result = python_result
-                        log_and_print(f"IGA Python scraper returned {len(python_result['products'])} products")
-                    else:
-                        log_and_print(f"IGA Python scraper failed: {python_result.get('error', 'No products')}")
+            # Use Node.js scraper for all stores (including aldi, iga) unless -py explicitly requested
+            if (not scraper_result.get('products') or 
+                store not in ['aldi-py', 'iga-py']):
                 
-                # For ALDI, Woolworths, Coles, Harris - use Node.js scrapers
-                if (not scraper_result.get('products') and 
-                    store in ['aldi', 'woolworths', 'coles', 'harris', 'all']):
-                    
-                    log_and_print("Using Node.js scraper for ALDI/Woolworths/Coles/Harris stores")
-                    node_result = run_node_scraper(query, store, max_results=50)
-                    
-                    if 'error' not in node_result:
-                        # Merge with existing Python results if any
-                        existing_products = scraper_result.get('products', [])
-                        node_products = node_result.get('products', [])
-                        scraper_result = {'products': existing_products + node_products}
-                    else:
-                        # If Node.js failed and no Python results, use the Node.js error
-                        if not scraper_result.get('products'):
-                            scraper_result = node_result
+                log_and_print("Using Node.js scraper")
+                node_result = run_node_scraper(query, store, max_results=50)
+                
+                if 'error' not in node_result:
+                    # Merge with existing Python results if any
+                    existing_products = scraper_result.get('products', [])
+                    node_products = node_result.get('products', [])
+                    scraper_result = {'products': existing_products + node_products}
+                else:
+                    # If Node.js failed and no Python results, use the Node.js error
+                    if not scraper_result.get('products'):
+                        scraper_result = node_result
 
             if 'error' in scraper_result:
                 return jsonify({
@@ -650,10 +477,7 @@ def health_check():
         'success': True,
         'status': 'healthy',
         'python_scrapers_available': PYTHON_SCRAPERS_AVAILABLE,
-        'python_scrapers_stores': ['iga'] if PYTHON_SCRAPERS_AVAILABLE else [],
         'node_scraper_available': grocery_scraper_found,
-        'node_scraper_stores': ['aldi', 'woolworths', 'coles', 'harris'] if grocery_scraper_found else [],
-        'scraper_priority': 'Python scraper for IGA only, Node.js for ALDI/Woolworths/Coles/Harris (ALDI Python API has issues)',
         'grocery_scraper_path_check': found_paths,
         'current_directory': current_dir,
         'cache_entries': len(search_cache),
@@ -684,13 +508,8 @@ def test_scraper():
         
         log_and_print(f"Testing Node.js scraper with query='{query}', store='{store}'")
         
-        # Test the appropriate scraper based on store
-        if store == 'iga':
-            log_and_print(f"Testing Python scraper for {store}")
-            result = run_python_scrapers(query, ['iga'], max_results=5)
-        else:
-            log_and_print(f"Testing Node.js scraper for {store}")
-            result = run_node_scraper(query, store, max_results=5)
+        # Test the Node.js scraper directly
+        result = run_node_scraper(query, store, max_results=5)
         
         return jsonify({
             'success': True,
@@ -738,43 +557,47 @@ def search_all_stores(search_keys, max_results_per_store=50, selected_stores=Non
     for search_key in search_keys:
         log_and_print(f"Searching stores {search_stores} for: {search_key}")
         
-        # Use Python scrapers for IGA only (ALDI has API issues)
-        if 'all' in search_stores or any(store in ['iga', 'iga-py'] for store in search_stores):
-            if PYTHON_SCRAPERS_AVAILABLE:
-                log_and_print(f"Using Python scraper for IGA store")
-                python_result = run_python_scrapers(search_key, ['iga'], max_results_per_store)
-                
-                if 'products' in python_result:
-                    all_products.extend(python_result['products'])
-                    log_and_print(f"IGA Python scraper added {len(python_result['products'])} products")
-                elif 'error' in python_result:
-                    log_and_print(f"IGA Python scraper failed: {python_result['error']}", 'warning')
-        
-        # Use Node.js scrapers for ALDI, Woolworths, Coles, Harris Farm stores
-        if 'all' in search_stores or any(store in ['aldi', 'woolworths', 'coles', 'harris'] for store in search_stores):
-            # Determine which stores to scrape with Node.js
+        # Use Python scrapers (ALDI and IGA) if needed
+        if use_python_scrapers and PYTHON_SCRAPERS_AVAILABLE:
             if 'all' in search_stores:
-                node_stores_to_search = ['aldi', 'woolworths', 'coles', 'harris']
+                python_result = run_python_scrapers(search_key, 'all', max_results_per_store)
             else:
-                node_stores_to_search = [store for store in search_stores if store in ['aldi', 'woolworths', 'coles', 'harris']]
+                # Filter selected python stores
+                python_stores = [store for store in selected_stores if store in ['aldi-py', 'iga-py']]
+                if python_stores:
+                    # Convert store names for python scraper
+                    python_store_map = {'aldi-py': 'aldi', 'iga-py': 'iga'}
+                    mapped_stores = [python_store_map.get(store, store) for store in python_stores]
+                    python_result = run_python_scrapers(search_key, mapped_stores, max_results_per_store)
+                else:
+                    python_result = {}
             
-            if node_stores_to_search:
-                log_and_print(f"Using Node.js scrapers for stores: {node_stores_to_search}")
-                # For multiple stores, call each individually and combine
-                node_result = {'products': []}
-                for store in node_stores_to_search:
-                    store_result = run_node_scraper(search_key, store, max_results_per_store)
-                    if 'products' in store_result:
-                        node_result['products'].extend(store_result['products'])
-                        log_and_print(f"Node.js scraper for {store} added {len(store_result['products'])} products")
-                    elif isinstance(store_result, list):
-                        node_result['products'].extend(store_result)
-                        log_and_print(f"Node.js scraper for {store} added {len(store_result)} products")
-                    elif 'error' in store_result:
-                        log_and_print(f"Node.js scraper for {store} failed: {store_result['error']}", 'warning')
-                
-                if node_result['products']:
-                    all_products.extend(node_result['products'])
+            if 'products' in python_result:
+                all_products.extend(python_result['products'])
+        
+        # Use Node.js scrapers (Woolworths, Coles, Harris Farm, etc.) if needed
+        if use_node_scrapers:
+            if 'all' in search_stores:
+                node_result = run_node_scraper(search_key, 'all', max_results_per_store)
+            else:
+                # Filter selected node stores
+                node_stores = [store for store in selected_stores if store in ['woolworths', 'coles', 'harris', 'iga', 'aldi']]
+                if node_stores:
+                    # For multiple stores, we'll need to call each individually and combine
+                    node_result = {'products': []}
+                    for store in node_stores:
+                        store_result = run_node_scraper(search_key, store, max_results_per_store)
+                        if 'products' in store_result:
+                            node_result['products'].extend(store_result['products'])
+                        elif isinstance(store_result, list):
+                            node_result['products'].extend(store_result)
+                else:
+                    node_result = {}
+            
+            if 'products' in node_result:
+                all_products.extend(node_result['products'])
+            elif isinstance(node_result, list):
+                all_products.extend(node_result)
     
     # Remove duplicates based on title and store
     seen = set()
@@ -1482,13 +1305,8 @@ def search_store_products(store_name):
                 
             log_and_print(f"Searching {store_name} for: {search_term}")
             
-            # Use Python scraper for IGA only, Node.js for others (including ALDI due to API issues)
-            if store_name == 'iga':
-                log_and_print(f"Using Python scraper for {store_name}")
-                scraper_result = run_python_scrapers(search_term, ['iga'], max_results)
-            else:
-                log_and_print(f"Using Node.js scraper for {store_name}")
-                scraper_result = run_node_scraper(search_term, store_name, max_results)
+            # Use the existing scraper function with specific store and limit of 50 to get enough results
+            scraper_result = run_node_scraper(search_term, store_name, max_results)
             
             if 'error' in scraper_result:
                 log_and_print(f"Error searching for {search_term} in {store_name}: {scraper_result['error']}", 'error')

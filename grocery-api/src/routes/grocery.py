@@ -94,15 +94,15 @@ def log_and_print(message, level='info'):
 search_cache = {}
 CACHE_DURATION = 300  # 5 minutes in seconds
 
-def get_cache_key(query, store):
+def get_cache_key(query, store, max_results=50):
     """Generate a cache key for the search parameters"""
-    return hashlib.md5(f"{query.lower()}:{store}".encode()).hexdigest()
+    return hashlib.md5(f"{query.lower()}:{store}:{max_results}".encode()).hexdigest()
 
 def is_cache_valid(cache_entry):
     """Check if cache entry is still valid"""
     return time.time() - cache_entry['timestamp'] < CACHE_DURATION
 
-def run_python_scrapers(query, store='all', max_results=200, timeout_seconds=30):
+def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
     """
     Run the Python scrapers for ALDI and IGA with improved error handling and store support
     
@@ -328,9 +328,10 @@ def search_products():
         
         page = data.get('page', 1)
         per_page = data.get('perPage', 10)
+        max_results = data.get('max_results', 50)  # Get max_results from request or default to 50
         
         # Generate cache key
-        cache_key = get_cache_key(query, store)
+        cache_key = get_cache_key(query, store, max_results)
         
         # Check if we have cached results that are still valid
         if cache_key in search_cache and is_cache_valid(search_cache[cache_key]):
@@ -347,7 +348,7 @@ def search_products():
             if PYTHON_SCRAPERS_AVAILABLE and store in ['aldi-py', 'iga-py']:
                 log_and_print("Using Python scrapers (explicitly requested)")
                 python_store = store.replace('-py', '')  # Convert aldi-py -> aldi
-                scraper_result = run_python_scrapers(query, python_store, max_results=200)
+                scraper_result = run_python_scrapers(query, python_store, max_results=max_results)
                 
                 if 'error' in scraper_result:
                     log_and_print(f"Python scrapers failed: {scraper_result['error']}")
@@ -368,7 +369,7 @@ def search_products():
                 
                 if stores_to_scrape:
                     log_and_print(f"Using Python scrapers for stores: {stores_to_scrape}")
-                    python_result = run_python_scrapers(query, stores_to_scrape, max_results=200)
+                    python_result = run_python_scrapers(query, stores_to_scrape, max_results=max_results)
                     
                     if 'error' not in python_result and python_result.get('products'):
                         scraper_result = python_result
@@ -1202,9 +1203,9 @@ def search_store_products(store_name):
         page = data.get('page', 1)
         per_page = data.get('perPage', 10)
         
-        # Define search terms for different dietary preferences
+        # Get max_results from request or use default based on store
         if(store_name in ['iga', 'aldi']):
-            max_results = 10
+            max_results = data.get('max_results', 10)  # Default 10 for IGA/ALDI
             dietary_search_terms = {
                 'none': [
                     # General groceries - any food items (non-veg and veg)
@@ -1230,7 +1231,7 @@ def search_store_products(store_name):
                 ]
             }
         else:
-            max_results = 50
+            max_results = data.get('max_results', 50)  # Default 50 for other stores
             dietary_search_terms = {
                 'none': [
                     'grocery'

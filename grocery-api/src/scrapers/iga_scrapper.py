@@ -2,7 +2,7 @@ import requests
 import time
 import sys
 
-def fetch_iga_products(query, limit=100, store_id='32600'):
+def fetch_iga_products(query, limit=50, store_id='32600'):
     """
     Attempt to fetch products from IGA Shop Online API
     

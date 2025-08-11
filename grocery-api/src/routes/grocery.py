@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify, send_file
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask_cors import cross_origin
 # subprocess import removed - no longer needed for Node.js scraper
 import json
@@ -77,10 +78,7 @@ def get_store_logo_url(store_name, api_base_url=None):
     return f"{api_base_url}/logos/{logo_filename}"
 
 def log_and_print(message, level='info'):
-    """Print message to console and log it with proper flushing"""
-    print(message)
-    sys.stdout.flush()  # Force flush the output buffer
-    
+    """Log message once using the configured logger"""
     if level.lower() == 'info':
         logger.info(message)
     elif level.lower() == 'error':
@@ -218,14 +216,18 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
         # Scrape ALDI if requested
         if 'aldi' in stores_to_search and aldi_scrapper:
             try:
-                log_and_print(f"Scraping ALDI Python API for: {query}")
+                log_and_print(f"0001 Scraping ALDI Python API for: {query} with max_results {max_results}")
                 
                 aldi_products = aldi_scrapper.fetch_aldi_products_with_discount(
                     query, 
-                    limit=min(max_results, 100)
+                    limit=min(max_results, 50)
                 )
                 
                 if aldi_products:
+                    # Enforce max_results across paginated results
+                    if len(aldi_products) > max_results:
+                        log_and_print(f"ALDI returned {len(aldi_products)} raw products; capping to max_results={max_results}")
+                        aldi_products = aldi_products[:max_results]
                     log_and_print(f"ALDI returned {len(aldi_products)} raw products")
                     
                     # Convert to standard format
@@ -256,6 +258,10 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
                 )
                 
                 if iga_products:
+                    # Enforce max_results to be consistent with API contract
+                    if len(iga_products) > max_results:
+                        log_and_print(f"IGA returned {len(iga_products)} raw products; capping to max_results={max_results}")
+                        iga_products = iga_products[:max_results]
                     log_and_print(f"IGA returned {len(iga_products)} raw products")
                     
                     # Convert to standard format
@@ -1194,7 +1200,7 @@ def search_store_products(store_name):
     """Search for multiple products in a specific store, returning 10 cheapest items for each search term"""
     try:
         data = request.get_json()
-        
+
         if not data:
             return jsonify({'error': 'Request body is required'}), 400
         
@@ -1209,20 +1215,19 @@ def search_store_products(store_name):
             dietary_search_terms = {
                 'none': [
                     # General groceries - any food items (non-veg and veg)
-                    'milk', 'eggs', 'chicken', 'rice', 'pasta', 'cheese', 'butter',
+                    'milk', 'eggs', 'rice', 'pasta', 
                     'yogurt', 'fruit', 'vegetables', 'meat', 'dairy',
                     'grocery',
                 ],  
                 'vegetarian': [
-                    'vegetarian protein', 'tofu', 'beans', 'lentils',
-                    'quinoa', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
-                    'vegetarian cheese'
+                    'vegetarian protein', 'tofu', 'beans', 'lentils', 'vegetarian curry', 'vegetarian soup', 'nuts', 'seeds',
+                    'vegetables'
                 ],
                 'vegan': [
                     'vegan protein', 'tofu', 'tempeh', 'vegan cheese', 'milk', 'yeast', 'yogurt', 'agave', 'maple syrup', 'cashew cream'
                 ],
                 'gluten free': [
-                    'gluten free', 'rice', 'flour', 'quinoa', 'rice cakes', 'corn tortillas', 'rice noodles'
+                    'gluten free', 'rice', 'flour',  'rice cakes', 'corn tortillas', 'rice noodles'
                 ],
                 'others': [
                     'bread', 'milk', 'eggs', 'rice', 'pasta', 
@@ -1249,12 +1254,13 @@ def search_store_products(store_name):
                     'others'
                 ]
             }
-        # Use dietary preference search terms - all preferences have predefined terms
-        if dietary_preference in dietary_search_terms:
-            search_terms = dietary_search_terms[dietary_preference]
-            log_and_print(f"Using dietary preference '{dietary_preference}' with {len(search_terms)} search terms")
-        else:
-            return jsonify({'error': f'Invalid dietary_preference "{dietary_preference}". Supported: none, vegetarian, vegan, gluten free, others'}), 400
+        # Use client-provided search_terms if present; otherwise use dietary preference defaults
+        if not search_terms:
+            if dietary_preference in dietary_search_terms:
+                search_terms = dietary_search_terms[dietary_preference]
+                log_and_print(f"Using dietary preference '{dietary_preference}' with {len(search_terms)} search terms")
+            else:
+                return jsonify({'error': f'Invalid dietary_preference "{dietary_preference}". Supported: none, vegetarian, vegan, gluten free, others'}), 400
         
         # Validate store name
         store_name = store_name.lower().strip()
@@ -1268,43 +1274,45 @@ def search_store_products(store_name):
         
         all_products = []
         search_term_stats = []
-        
-        # Search for each term individually
-        for search_term in search_terms:
-            search_term = search_term.strip()
-            if not search_term:
-                continue
-                
-            log_and_print(f"Searching {store_name} for: {search_term}")
-            
-            # Use Python scrapers for supported stores
+
+        def scrape_single_term(search_term: str):
+            term = search_term.strip()
+            if not term:
+                return [], {
+                    'search_term': term,
+                    'total_found': 0,
+                    'products_returned': 0,
+                    'error': 'empty term'
+                }
+
             if store_name in ['aldi', 'iga']:
-                log_and_print(f"Using Python scraper for {store_name}")
-                scraper_result = run_python_scrapers(search_term, [store_name], max_results)
+                log_and_print(f"line 1290: Using Python scraper for '{store_name}' for '{term}' with max_results '{max_results}'")
+                scraper_result = run_python_scrapers(term, [store_name], max_results)
             else:
-                # This shouldn't happen due to validation, but just in case
                 log_and_print(f"Store '{store_name}' is not supported")
-                scraper_result = {"error": f"Store '{store_name}' is not supported"}
-            
+                return [], {
+                    'search_term': term,
+                    'total_found': 0,
+                    'products_returned': 0,
+                    'error': f"Store '{store_name}' is not supported"
+                }
+
             if 'error' in scraper_result:
-                log_and_print(f"Error searching for {search_term} in {store_name}: {scraper_result['error']}", 'error')
-                search_term_stats.append({
-                    'search_term': search_term,
+                log_and_print(f"Error searching for {term} in {store_name}: {scraper_result['error']}", 'error')
+                return [], {
+                    'search_term': term,
                     'total_found': 0,
                     'products_returned': 0,
                     'error': scraper_result['error']
-                })
-                continue
-            
-            # Extract products from scraper result
+                }
+
             if 'products' in scraper_result:
                 raw_products = scraper_result['products']
             elif isinstance(scraper_result, list):
                 raw_products = scraper_result
             else:
                 raw_products = []
-            
-            # Process and standardize products
+
             processed_products = []
             for p in raw_products:
                 store_name_from_product = p.get("store", store_name)
@@ -1322,25 +1330,31 @@ def search_store_products(store_name):
                     "brand": p.get("brand", ""),
                     "category": p.get("category", ""),
                     "productUrl": p.get("productUrl", ""),
-                    "search_term": search_term,  # Add the search term that found this product
+                    "search_term": term,
                     "scraped_at": p.get("scraped_at", time.strftime('%Y-%m-%dT%H:%M:%SZ'))
                 }
-                
-                # Only include products with valid prices
                 if product["numericPrice"] > 0:
                     processed_products.append(product)
-            
-            # Add all products to the list (not just 10)
-            all_products.extend(processed_products)
-            
-            # Track stats for this search term
-            search_term_stats.append({
-                'search_term': search_term,
+
+            stat = {
+                'search_term': term,
                 'total_found': len(processed_products),
                 'products_returned': len(processed_products)
-            })
-            
-            log_and_print(f"Found {len(processed_products)} total, returning all {len(processed_products)} products for '{search_term}' in {store_name}")
+            }
+            log_and_print(f"Found {len(processed_products)} total, returning all {len(processed_products)} products for '{term}' in {store_name}")
+            return processed_products, stat
+
+        # Parallelize scraping across search terms
+        max_workers = min(8, len(search_terms)) if search_terms else 1
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(scrape_single_term, t) for t in search_terms]
+            for future in as_completed(futures):
+                try:
+                    products_result, stat_result = future.result()
+                    all_products.extend(products_result)
+                    search_term_stats.append(stat_result)
+                except Exception as e:
+                    log_and_print(f"Worker error: {e}", 'error')
         
         
         return jsonify({

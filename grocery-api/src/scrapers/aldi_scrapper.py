@@ -1,25 +1,54 @@
 import requests
 import time
 import sys
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+def log_and_print(message, level='info'):
+    """Log message once using the configured logger"""
+    if level.lower() == 'info':
+        logger.info(message)
+    elif level.lower() == 'error':
+        logger.error(message)
+    elif level.lower() == 'warning':
+        logger.warning(message)
+    elif level.lower() == 'debug':
+        logger.debug(message)
+
 
 def fetch_aldi_products_with_discount(query, limit=24, service_point='G452'):
-    # ALDI API only accepts specific limit values
-    valid_limits = [12, 16, 24, 30, 32, 48, 60]
-    if limit not in valid_limits:
-        # Find the closest valid limit
-        limit = min(valid_limits, key=lambda x: abs(x - limit))
-        print(f"Adjusted limit to {limit} (ALDI API requirement)")
+    # Store the original requested limit (total products desired)
+    max_products_wanted = limit
+    
+    # ALDI API only accepts specific limit values as page size
+    valid_page_sizes = [12, 16, 24, 30, 32, 48, 60]
+    page_size = min(valid_page_sizes, key=lambda x: abs(x - limit))
+    log_and_print(f"ALDI: Requested {max_products_wanted} products; using page size {page_size} (ALDI API requirement)")
     
     base_url = "https://api.aldi.com.au/v3/product-search"
     offset = 0
     products = []
+    
+    # Start timing for 5-second timeout
+    start_time = time.time()
+    timeout_seconds = 5
 
-    while True:
+    while len(products) < max_products_wanted:
+        # Check if we've exceeded the timeout
+        if time.time() - start_time > timeout_seconds:
+            log_and_print(f"ALDI search for '{query}' timed out after {timeout_seconds}s, returning {len(products)} products")
+            break
+        # Calculate how many more products we need
+        remaining_needed = max_products_wanted - len(products)
+        
+        # Use the standard page size, but we'll break early if we get enough
         params = {
             'currency': 'AUD',
             'serviceType': 'walk-in',
             'q': query,
-            'limit': limit,
+            'limit': page_size,
             'offset': offset,
             'sort': 'relevance',
             'testVariant': 'A',
@@ -28,14 +57,20 @@ def fetch_aldi_products_with_discount(query, limit=24, service_point='G452'):
 
         response = requests.get(base_url, params=params)
         if response.status_code != 200:
-            print(f"Failed to fetch data: HTTP {response.status_code}")
+            log_and_print(f"Failed to fetch data: HTTP {response.status_code}")
             break
 
         data = response.json()
+
+        log_and_print(f"line 57: Data length: {len(data)}")
         if 'data' not in data or len(data['data']) == 0:
             break
 
+        # Process items from this page, but stop if we reach our limit
         for item in data['data']:
+            if len(products) >= max_products_wanted:
+                break
+                
             product = {}
             product['name'] = item.get('name')
             product['categoryKey'] = None  # No category info in search results
@@ -62,14 +97,22 @@ def fetch_aldi_products_with_discount(query, limit=24, service_point='G452'):
             product['imageUrl'] = image_url
             products.append(product)
 
+        # Check if we have enough products or if there are no more pages
+        if len(products) >= max_products_wanted:
+            log_and_print(f"Reached desired limit of {max_products_wanted} products")
+            break
+            
         pagination = data.get('meta', {}).get('pagination', {})
         total = pagination.get('totalCount', 0)
-        offset += limit
+        offset += page_size
         if offset >= total:
+            log_and_print(f"Reached end of results (total available: {total})")
             break
+            
         # Respectful delay to avoid hammering the API
         time.sleep(1)
 
+    log_and_print(f"{time.time()} ALDI scraper returning {len(products)} products (requested: {max_products_wanted})")
     return products
 
 # Assuming products is a list of dicts with a 'price' key as string like '$1.99'
@@ -95,7 +138,7 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
     print("Fetching categories...")
     categories_response = requests.get(categories_url, params=categories_params)
     if categories_response.status_code != 200:
-        print(f"Failed to fetch categories: HTTP {categories_response.status_code}")
+        log_and_print(f"Failed to fetch categories: HTTP {categories_response.status_code}")
         return {}
     
     categories_data = categories_response.json()
@@ -111,7 +154,7 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
             if category_key:
                 category_keys.append((category_key, category_name))
             
-            print(f"Category: {category_name}")
+            log_and_print(f"Category: {category_name}")
             
             # Check for subcategories
             # subcategories = category.get('children', [])
@@ -126,15 +169,15 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
     else:
         categories_list = extract_categories(categories_data)
     
-    print(f"Found {len(categories_list)} categories")
+    log_and_print(f"Found {len(categories_list)} categories")
 
     categories_list = [name for name in categories_list if name[1] not in ['Liquor', 'Cleaning & Household', 'Baby', 'Drinks', 'Cleaning & Household', 'Pets', ]]
 
-    print(f"Found {len(categories_list)} categories after filtering")
+    log_and_print(f"Found {len(categories_list)} categories after filtering")
     
     # For each category, fetch products
     for category_key, category_name in categories_list:
-        print(f"Fetching products for category: {category_name}")
+        log_and_print(f"Fetching products for category: {category_name}")
         
         products_url = "https://api.aldi.com.au/v3/product-search"
         products_params = {
@@ -150,7 +193,7 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
         
         products_response = requests.get(products_url, params=products_params)
         if products_response.status_code != 200:
-            print(f"Failed to fetch products for category {category_name}: HTTP {products_response.status_code}")
+            log_and_print(f"Failed to fetch products for category {category_name}: HTTP {products_response.status_code}")
             continue
         
         products_data = products_response.json()
@@ -185,9 +228,9 @@ def fetch_aldi_special_products(service_point='G452', limit=16):
                 all_products.append(product)
         
         if 'data' in products_data and products_data['data']:
-            print(f"  Found {len(products_data['data'])} products")
+            log_and_print(f"  Found {len(products_data['data'])} products")
         else:
-            print(f"  No products found")
+            log_and_print(f"  No products found")
         
         # Respectful delay between API calls
         time.sleep(0.5)
@@ -204,9 +247,9 @@ def parse_price(price_str):
 
 def scrape_aldi(query, limit=24):
     """Main method to scrape ALDI for products"""
-    print(f"Searching ALDI for: '{query}'")
+    log_and_print(f"Searching ALDI for: '{query}'")
     results = fetch_aldi_products_with_discount(query, limit)
-    print(f"Fetched {len(results)} products for query: '{query}'")
+    log_and_print(f"Fetched {len(results)} products for query: '{query}'")
     
     if results:
         sorted_products = sorted(results, key=lambda x: aldi_parse_price(x['price']))
@@ -223,33 +266,33 @@ if __name__ == '__main__':
         print("Fetching special products from all categories...")
         special_products = fetch_aldi_special_products()
         
-        print(f"\nFetched {len(special_products)} products total")
+        log_and_print(f"\nFetched {len(special_products)} products total")
         sorted_products = sorted(special_products, key=lambda x: parse_price(x['price']))
         
         for i, product in enumerate(sorted_products, 1):
             print("--->>>")
-            print(f"Product {i}:")
-            print(f"Name: {product['name']}")
-            print(f"Price: {product['price']}")
-            print(f"Discount Price: {product['discount_price'] if product['discount_price'] else 'No discount'}")
-            print(f"Image URL: {product['imageUrl']}")
-            print(f"Category: {product['categoryName']}")
+            log_and_print(f"Product {i}:")
+            log_and_print(f"Name: {product['name']}")
+            log_and_print(f"Price: {product['price']}")
+            log_and_print(f"Discount Price: {product['discount_price'] if product['discount_price'] else 'No discount'}")
+            log_and_print(f"Image URL: {product['imageUrl']}")
+            log_and_print(f"Category: {product['categoryName']}")
             print("---")
         
     elif len(sys.argv) > 1:
         query = sys.argv[1]
-        print(f"Searching for: '{query}'")
+        log_and_print(f"Searching for: '{query}'")
         results = fetch_aldi_products_with_discount(query)
-        print(f"Fetched {len(results)} products for query: '{query}'")
+        log_and_print(f"Fetched {len(results)} products for query: '{query}'")
         sorted_products = sorted(results, key=lambda x: parse_price(x['price']))
 
         for i, product in enumerate(sorted_products, 1):
             print("--->>>")
-            print(f"Product {i}:")
-            print(f"Name: {product['name']}")
-            print(f"Price: {product['price']}")
-            print(f"Discount Price: {product['discount_price'] if product['discount_price'] else 'No discount'}")
-            print(f"Image URL: {product['imageUrl']}")
+            log_and_print(f"Product {i}:")
+            log_and_print(f"Name: {product['name']}")
+            log_and_print(f"Price: {product['price']}")
+            log_and_print(f"Discount Price: {product['discount_price'] if product['discount_price'] else 'No discount'}")
+            log_and_print(f"Image URL: {product['imageUrl']}")
             print("---")
     
     else:
@@ -260,4 +303,4 @@ if __name__ == '__main__':
         print("  python aldi_scrapper.py milk")
         print("  python aldi_scrapper.py --special")
     time_end = time.time()
-    print(f"Time taken: {time_end - time_start} seconds")
+    log_and_print(f"Time taken: {time_end - time_start} seconds")

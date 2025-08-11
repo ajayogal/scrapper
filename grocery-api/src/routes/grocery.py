@@ -103,7 +103,7 @@ def is_cache_valid(cache_entry):
 
 def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
     """
-    Run the Python scrapers for ALDI and IGA with improved error handling and store support
+    Run the Python scrapers for ALDI, IGA, and Harris Farm Markets with improved error handling and store support
     
     Args:
         query (str): Search query
@@ -406,7 +406,7 @@ def search_products():
         else:
             log_and_print(f"LN-201: Fetching fresh results for query: {query}, store: {store}")
             
-            # Priority: Use Python scrapers for ALDI and IGA, fallback to Node.js
+            # Priority: Use Python scrapers for ALDI, IGA, and Harris Farm Markets
             scraper_result = {"products": []}
             
             # Always use Node.js scraper for production reliability
@@ -424,7 +424,7 @@ def search_products():
                 else:
                     log_and_print("Python scrapers returned no products")
             
-            # Use Python scrapers for ALDI and IGA
+            # Use Python scrapers for ALDI, IGA, and Harris Farm Markets
             if not scraper_result.get('products'):
                 # Determine which stores to scrape
                 stores_to_scrape = []
@@ -535,7 +535,7 @@ def get_stores():
     return jsonify({
         'success': True,
         'stores': stores,
-        'message': 'Both ALDI and IGA are supported via Python scrapers (ALDI may have API limitations)'
+        'message': 'ALDI, IGA, and Harris Farm Markets are supported via Python scrapers (ALDI may have API limitations)'
     })
 
 @grocery_bp.route('/health', methods=['GET'])
@@ -548,8 +548,8 @@ def health_check():
         'success': True,
         'status': 'healthy',
         'python_scrapers_available': PYTHON_SCRAPERS_AVAILABLE,
-        'supported_stores': ['aldi', 'iga'] if PYTHON_SCRAPERS_AVAILABLE else [],
-        'scraper_info': 'Using Python scrapers for both ALDI and IGA. Node.js scrapers have been removed.',
+        'supported_stores': ['aldi', 'iga', 'harris'] if PYTHON_SCRAPERS_AVAILABLE else [],
+        'scraper_info': 'Using Python scrapers for ALDI, IGA, and Harris Farm Markets. Node.js scrapers have been removed.',
         'current_directory': current_dir,
         'cache_entries': len(search_cache),
         'cache_keys': list(search_cache.keys())
@@ -607,17 +607,17 @@ def test_scraper():
         }), 500
 
 def search_all_stores(search_keys, max_results_per_store=50, selected_stores=None):
-    """Search ALDI and IGA stores for the given search keys"""
+    """Search ALDI, IGA, and Harris Farm Markets stores for the given search keys"""
     if selected_stores is None or len(selected_stores) == 0:
-        # Default to both supported stores
-        search_stores = ['aldi', 'iga']
+        # Default to all supported stores
+        search_stores = ['aldi', 'iga', 'harris']
     else:
         # Only keep supported stores from selected stores
-        search_stores = [store for store in selected_stores if store in ['aldi', 'iga', 'all']]
+        search_stores = [store for store in selected_stores if store in ['aldi', 'iga', 'harris', 'all']]
         if 'all' in selected_stores:
-            search_stores = ['aldi', 'iga']
+            search_stores = ['aldi', 'iga', 'harris']
         elif not search_stores:
-            log_and_print("No supported stores in selection. ALDI and IGA are supported.", 'warning')
+            log_and_print("No supported stores in selection. ALDI, IGA, and Harris Farm Markets are supported.", 'warning')
             return []
     
     all_products = []

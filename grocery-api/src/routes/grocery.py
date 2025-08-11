@@ -14,18 +14,19 @@ import random
 # Import the Python scraper modules
 try:
     # Try relative import first
-    from ..scrapers import aldi_scrapper, iga_scrapper
+    from ..scrapers import aldi_scrapper, iga_scrapper, harris_scrapper
     PYTHON_SCRAPERS_AVAILABLE = True
 except ImportError:
     try:
         # Try absolute import if relative fails
-        from scrapers import aldi_scrapper, iga_scrapper
+        from scrapers import aldi_scrapper, iga_scrapper, harris_scrapper
         PYTHON_SCRAPERS_AVAILABLE = True
     except ImportError as e:
         print(f"Warning: Could not import Python scrapers: {e}")
         print("Python scrapers not available")
         aldi_scrapper = None
         iga_scrapper = None
+        harris_scrapper = None
         PYTHON_SCRAPERS_AVAILABLE = False
 
 grocery_bp = Blueprint('grocery', __name__)
@@ -121,7 +122,7 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
         if isinstance(store_param, list):
             stores = store_param
         elif store_param == 'all':
-            stores = ['aldi', 'iga']
+            stores = ['aldi', 'iga', 'harris']
         else:
             stores = [store_param]
         
@@ -131,7 +132,7 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
             s = s.lower().strip()
             if s.endswith('-py'):
                 s = s[:-3]
-            if s in ['aldi', 'iga']:
+            if s in ['aldi', 'iga', 'harris']:
                 normalized.append(s)
         
         return normalized
@@ -206,6 +207,33 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
             log_and_print(f"Error standardizing IGA product {product}: {e}", 'error')
             return None
     
+    def standardize_harris_product(product):
+        """Convert Harris product to standard format"""
+        try:
+            # Harris scraper already returns in a good format, just need minor adjustments
+            main_price = product.get('price', '')
+            
+            return {
+                'title': product.get('title', '').strip(),
+                'store': product.get('store', 'Harris Farm Markets'),
+                'price': main_price,
+                'discountedPrice': product.get('discountedPrice', ''),
+                'discount': product.get('discount', ''),
+                'numericPrice': product.get('numericPrice', 0),
+                'inStock': product.get('inStock', True),
+                'unitPrice': product.get('unitPrice', ''),
+                'unitPriceText': product.get('unitPriceText', ''),
+                'imageUrl': product.get('imageUrl', ''),
+                'brand': product.get('brand', ''),
+                'category': product.get('category', ''),
+                'productUrl': product.get('productUrl', ''),
+                'scraped_at': product.get('scraped_at', time.strftime('%Y-%m-%dT%H:%M:%SZ')),
+                'scraper_source': 'python_harris'
+            }
+        except Exception as e:
+            log_and_print(f"Error standardizing Harris product {product}: {e}", 'error')
+            return None
+    
     try:
         all_products = []
         stores_to_search = normalize_store_names(store)
@@ -278,6 +306,38 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
                 error_msg = f"IGA scraper failed: {str(e)}"
                 log_and_print(error_msg, 'error')
                 scraper_errors.append(f"IGA: {error_msg}")
+        
+        # Scrape Harris if requested
+        if 'harris' in stores_to_search and harris_scrapper:
+            try:
+                log_and_print(f"Scraping Harris Farm Markets for: {query}")
+                
+                harris_products = harris_scrapper.fetch_harris_products(
+                    query, 
+                    max_results=min(max_results, 100)
+                )
+                
+                if harris_products:
+                    # Enforce max_results to be consistent with API contract
+                    if len(harris_products) > max_results:
+                        log_and_print(f"Harris returned {len(harris_products)} raw products; capping to max_results={max_results}")
+                        harris_products = harris_products[:max_results]
+                    log_and_print(f"Harris returned {len(harris_products)} raw products")
+                    
+                    # Convert to standard format
+                    for product in harris_products:
+                        standardized = standardize_harris_product(product)
+                        if standardized:
+                            all_products.append(standardized)
+                    
+                    log_and_print(f"Harris: {len([p for p in all_products if p.get('store') == 'Harris Farm Markets'])} products standardized")
+                else:
+                    log_and_print("Harris returned no products")
+                    
+            except Exception as e:
+                error_msg = f"Harris scraper failed: {str(e)}"
+                log_and_print(error_msg, 'error')
+                scraper_errors.append(f"Harris: {error_msg}")
         
         # Remove any None values from failed standardizations
         all_products = [p for p in all_products if p is not None]
@@ -1210,8 +1270,8 @@ def search_store_products(store_name):
         per_page = data.get('perPage', 10)
         
         # Get max_results from request or use default based on store
-        if(store_name in ['iga', 'aldi']):
-            max_results = data.get('max_results', 10)  # Default 10 for IGA/ALDI
+        if(store_name in ['iga', 'aldi', 'harris']):
+            max_results = data.get('max_results', 10)  # Default 10 for IGA/ALDI/Harris
             dietary_search_terms = {
                 'none': [
                     # General groceries - any food items (non-veg and veg)
@@ -1264,7 +1324,7 @@ def search_store_products(store_name):
         
         # Validate store name
         store_name = store_name.lower().strip()
-        valid_stores = ['aldi', 'iga']
+        valid_stores = ['aldi', 'iga', 'harris']
         if store_name not in valid_stores:
             return jsonify({
                 'error': f'Invalid store "{store_name}". Supported stores: {", ".join(valid_stores)}'
@@ -1285,7 +1345,7 @@ def search_store_products(store_name):
                     'error': 'empty term'
                 }
 
-            if store_name in ['aldi', 'iga']:
+            if store_name in ['aldi', 'iga', 'harris']:
                 log_and_print(f"line 1290: Using Python scraper for '{store_name}' for '{term}' with max_results '{max_results}'")
                 scraper_result = run_python_scrapers(term, [store_name], max_results)
             else:

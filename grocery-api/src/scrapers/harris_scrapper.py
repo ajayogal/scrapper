@@ -1,6 +1,12 @@
 import requests
 import time
 from typing import List, Dict, Tuple
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 
 def parse_complex_price(price_string: str) -> Dict[str, str]:
@@ -106,69 +112,104 @@ def _extract_text(element) -> str:
 
 def fetch_harris_products(query: str, max_results: int = 50) -> List[Dict]:
     """
-    Attempt to fetch products from Harris Farm search page using HTTP requests and HTML parsing.
-
-    Note: Harris Farm may use Cloudflare or client-side rendering which can block plain HTTP scrapers.
-    This function mirrors the JS scraper's intent as closely as possible without a headless browser.
+    Fetch products from Harris Farm search page using Selenium for JavaScript rendering.
     """
-    from bs4 import BeautifulSoup  # requires beautifulsoup4
-
+    from bs4 import BeautifulSoup
+    
     base_url = "https://www.harrisfarm.com.au"
     search_url = (
         f"{base_url}/search?q={requests.utils.quote(query)}"
         "&type=product%2Carticle%2Ccollection&options%5Bprefix%5D=last"
     )
 
-    session = _build_session()
-
+    driver = None
     try:
-        resp = session.get(search_url, timeout=30)
-        if resp.status_code != 200:
-            print(f"Failed to load page: HTTP {resp.status_code}")
-            return []
-
-        # Simple Cloudflare/challenge detection
-        text_preview = resp.text[:1000].lower()
-        if ("just a moment" in text_preview) or ("connection needs to be verified" in text_preview):
-            print("Detected Cloudflare challenge page; unable to proceed without a headless browser.")
-            return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
+        print(f"Loading Harris Farm search page: {search_url}")
+        
+        # Setup Chrome options
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")  # Run in background
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-web-security")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        # Create driver
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
+        
+        # Navigate to page
+        driver.get(search_url)
+        
+        # Wait for page to load and check for Cloudflare
+        time.sleep(3)
+        
+        # Check if we're on a Cloudflare challenge page
+        title = driver.title
+        if "Just a moment" in title or "connection needs to be verified" in driver.page_source:
+            print("Detected Cloudflare challenge, waiting...")
+            # Wait longer for Cloudflare to complete
+            time.sleep(10)
+            
+            # Check if challenge is resolved
+            try:
+                WebDriverWait(driver, 30).until(
+                    lambda d: "Just a moment" not in d.title and "connection needs to be verified" not in d.page_source
+                )
+                print("Cloudflare challenge completed")
+            except TimeoutException:
+                print("Cloudflare challenge may still be active, continuing anyway...")
+        
+        # Wait for products to load
+        try:
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".product-card, [class*='product']"))
+            )
+        except TimeoutException:
+            print("Products not found within timeout, continuing with current page content...")
+        
+        # Get page content after JavaScript execution
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        print(f"Parsed HTML - title: {soup.title.string if soup.title else 'No title'}")
 
         products: List[Dict] = []
         seen: set[str] = set()
 
-        # Try multiple container selectors similar to the JS implementation
+        # Try multiple container selectors
         product_selectors = [
             ".product-card",
-            ".product-item",
+            ".product-item", 
             "[class*='product-card']",
             "[class*='ProductCard']",
-            "[class*='product']",
+            "[class*='product']"
         ]
 
         product_elements = []
         for css in product_selectors:
             found = soup.select(css)
+            print(f"Selector '{css}' found {len(found)} elements")
             if found:
                 product_elements = found
+                print(f"Using selector: {css}")
                 break
 
-        # Fallback to product links if no obvious cards
+        # Fallback to product links
         if not product_elements:
             product_elements = soup.select("a[href*='/product']")
+            print(f"Fallback: Found {len(product_elements)} product links")
+            
+        print(f"Total product elements to process: {len(product_elements)}")
 
-        def extract_from_container(container) -> Tuple[Dict, str]:
-            # Name
+        for idx, container in enumerate(product_elements):
+            if len(products) >= max_results:
+                break
+                
+            # Extract product name
             name = ""
-            for sel in [
-                "h3",
-                "h2",
-                "[class*='title']",
-                "[class*='name']",
-                ".product-title",
-                "a[href*='/product']",
-            ]:
+            name_selectors = ['h3', 'h2', '[class*="title"]', '[class*="name"]', '.product-title', 'a[href*="/product"]']
+            for sel in name_selectors:
                 el = container.select_one(sel)
                 if el:
                     name = _extract_text(el)
@@ -176,97 +217,71 @@ def fetch_harris_products(query: str, max_results: int = 50) -> List[Dict]:
                         break
 
             if name:
-                import re as _re
-                name = _re.sub(r"\s+", " ", name).strip()
-                name = _re.sub(r"\$[\d,.]+.*$", "", name).strip()
+                import re
+                name = re.sub(r"\s+", " ", name).strip()
+                name = re.sub(r"\$[\d,.]+.*$", "", name).strip()
                 if len(name) > 80:
                     words = name.split(" ")
                     name = " ".join(words[:6])
 
-            # Prices
+            # Extract price - look for multiple price patterns
             price_text = ""
             unit_price_text = ""
             discount_amount = ""
 
-            for price_el in container.select("[class*='price']"):
-                full_text = _extract_text(price_el)
-                parsed = parse_complex_price(full_text)
-                if parsed.get("mainPrice"):
-                    price_text = parsed["mainPrice"]
-                    unit_price_text = parsed.get("unitPrice", "")
-                    discount_amount = parsed.get("discount", "")
+            # Try various price selectors
+            price_selectors = [
+                "[class*='price']",
+                ".price",
+                "[data-price]",
+                ".cost",
+                ".amount"
+            ]
+            
+            for price_sel in price_selectors:
+                price_elements = container.select(price_sel)
+                for price_el in price_elements:
+                    full_text = _extract_text(price_el)
+                    if full_text and "$" in full_text:
+                        # Parse complex price
+                        parsed = parse_complex_price(full_text)
+                        if parsed.get("mainPrice"):
+                            price_text = parsed["mainPrice"]
+                            unit_price_text = parsed.get("unitPrice", "")
+                            discount_amount = parsed.get("discount", "")
+                            break
+                        # Simple fallback
+                        import re
+                        if re.search(r"\$\d+\.?\d*", full_text):
+                            price_text = full_text
+                            break
+                if price_text:
                     break
-                # simple fallback
-                import re as _re2
-                if _re2.search(r"\$\d+\.?\d*", full_text):
-                    price_text = full_text
-                    break
 
-            # Try to find unit price separately if not within price block
-            if not unit_price_text:
-                for unit_el in container.select("[class*='unit'], [class*='per'], [class*='kg'], [class*='each']"):
-                    unit_text = _extract_text(unit_el)
-                    import re as _re3
-                    m = _re3.search(r"\$?(\d+\.?\d*)\s*(?:/\s*)?(kg|g|each|ea|per|l|ml)", unit_text, _re3.I)
-                    if m:
-                        unit_price_text = f"${m.group(1)} / {m.group(2)}"
-                        break
+            # Debug for first few products
+            if idx < 3:
+                print(f"Product {idx + 1}: name='{name}', price='{price_text}'")
 
-            unit_price_numeric = ""
-            if unit_price_text:
-                import re as _re4
-                m = _re4.search(r"\$?(\d+\.?\d*)", unit_price_text)
-                if m:
-                    unit_price_numeric = m.group(1)
-
-            # Image and URL
-            image_el = container.select_one("img")
+            # Extract other details
             image_url = ""
+            image_el = container.select_one("img")
             if image_el:
-                if image_el.has_attr("src") and image_el.get("src"):
-                    image_url = image_el.get("src")
-                elif image_el.has_attr("data-src") and image_el.get("data-src"):
-                    image_url = image_el.get("data-src")
-                elif image_el.has_attr("data-original") and image_el.get("data-original"):
-                    image_url = image_el.get("data-original")
-                elif image_el.has_attr("srcset") and image_el.get("srcset"):
-                    srcset_val = image_el.get("srcset")
-                    try:
-                        image_url = srcset_val.split(",")[0].strip().split(" ")[0]
-                    except Exception:
-                        image_url = srcset_val
+                image_url = (image_el.get("src") or 
+                           image_el.get("data-src") or 
+                           image_el.get("data-original") or "")
 
             link_el = container.select_one("a")
-            product_url = link_el.get("href") if link_el and link_el.has_attr("href") else (
-                container.get("href") if container.name == "a" and container.has_attr("href") else ""
-            )
+            product_url = ""
+            if link_el:
+                product_url = link_el.get("href", "")
+            elif container.name == "a":
+                product_url = container.get("href", "")
 
-            # Discount/original logic
-            discount = discount_amount or ""
-            discounted_price = ""
-            original_price = price_text
-            if discount_amount and price_text:
-                parsed_again = parse_complex_price(price_text)
-                if parsed_again.get("originalPrice"):
-                    original_price = parsed_again["originalPrice"]
-                    discounted_price = price_text
-            else:
-                disc_el = container.select_one("[class*='discount'], [class*='save'], [class*='was']")
-                if disc_el:
-                    discount = _extract_text(disc_el)
-                    was_el = container.select_one("[class*='was'], [class*='original']")
-                    was_text = _extract_text(was_el)
-                    if was_text:
-                        original_price = was_text
-                        discounted_price = price_text
+            # Normalize URLs
+            image_url_full = _normalize_url(base_url, image_url)
+            product_url_full = _normalize_url(base_url, product_url)
 
-            # Stock status
-            in_stock = True
-            stock_el = container.select_one("[class*='out-of-stock'], [class*='unavailable']")
-            if stock_el or (container.get_text(" ", strip=True).lower().find("out of stock") != -1):
-                in_stock = False
-
-            # Brand
+            # Extract brand
             brand = ""
             brand_el = container.select_one("[class*='brand']")
             if brand_el:
@@ -274,58 +289,53 @@ def fetch_harris_products(query: str, max_results: int = 50) -> List[Dict]:
             elif name:
                 brand = name.split(" ")[0]
 
-            # Category (not always available on search page)
-            category = ""
-            cat_el = container.select_one("[class*='category'], [class*='breadcrumb']")
-            if cat_el:
-                category = _extract_text(cat_el)
+            # Check stock
+            in_stock = True
+            if container.select_one("[class*='out-of-stock'], [class*='unavailable']"):
+                in_stock = False
+            elif "out of stock" in container.get_text(" ", strip=True).lower():
+                in_stock = False
 
-            # Numeric price for sorting
+            # Parse numeric price
             try:
                 numeric_price = float((price_text or "0").replace("$", "").replace(",", ""))
             except ValueError:
                 numeric_price = 0.0
 
-            image_url_full = _normalize_url("https://www.harrisfarm.com.au", image_url)
-            product_url_full = _normalize_url("https://www.harrisfarm.com.au", product_url)
-
-            product: Dict = {
-                "store": "Harris Farm Markets",
-                "title": name,
-                "price": original_price,
-                "discount": discount,
-                "discountedPrice": discounted_price,
-                "numericPrice": numeric_price,
-                "inStock": in_stock,
-                "unitPrice": unit_price_numeric or "",
-                "unitPriceText": unit_price_text or "",
-                "imageUrl": image_url_full,
-                "productUrl": product_url_full,
-                "brand": brand,
-                "category": category,
-                "scraped_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            }
-
-            # Make a stable uniqueness key (use normalized title + numeric price)
-            key = f"{(name or '').lower().strip()}-{numeric_price:.2f}"
-            return product, key
-
-        for idx, container in enumerate(product_elements):
-            if len(products) >= max_results:
-                break
-            product, key = extract_from_container(container)
-            if not product.get("title") or not product.get("price"):
-                continue
-            if key in seen:
-                continue
-            seen.add(key)
-            products.append(product)
+            if name and price_text:
+                # Create unique identifier
+                product_id = f"{name.lower().strip()}-{numeric_price:.2f}"
+                
+                if product_id not in seen:
+                    seen.add(product_id)
+                    
+                    product = {
+                        "store": "Harris Farm Markets",
+                        "title": name,
+                        "price": price_text,
+                        "discount": discount_amount,
+                        "discountedPrice": "",
+                        "numericPrice": numeric_price,
+                        "inStock": in_stock,
+                        "unitPrice": "",
+                        "unitPriceText": unit_price_text,
+                        "imageUrl": image_url_full,
+                        "productUrl": product_url_full,
+                        "brand": brand,
+                        "category": "",
+                        "scraped_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    }
+                    
+                    products.append(product)
 
         return products[:max_results]
 
     except Exception as exc:
         print(f"Error scraping Harris Farm Markets: {exc}")
         return []
+    finally:
+        if driver:
+            driver.quit()
 
 
 def get_harris_product_details(product_url: str) -> Dict:

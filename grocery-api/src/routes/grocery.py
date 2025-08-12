@@ -21,14 +21,19 @@ except ImportError:
         # Try absolute import if relative fails
         from scrapers import aldi_scrapper, iga_scrapper, harris_scrapper, coles_scrapper
         PYTHON_SCRAPERS_AVAILABLE = True
-    except ImportError as e:
-        print(f"Warning: Could not import Python scrapers: {e}")
-        print("Python scrapers not available")
-        aldi_scrapper = None
-        iga_scrapper = None
-        harris_scrapper = None
-        coles_scrapper = None
-        PYTHON_SCRAPERS_AVAILABLE = False
+    except ImportError:
+        try:
+            # Try src.scrapers import (what works on EC2)
+            from src.scrapers import aldi_scrapper, iga_scrapper, harris_scrapper, coles_scrapper
+            PYTHON_SCRAPERS_AVAILABLE = True
+        except ImportError as e:
+            print(f"Warning: Could not import Python scrapers: {e}")
+            print("Python scrapers not available")
+            aldi_scrapper = None
+            iga_scrapper = None
+            harris_scrapper = None
+            coles_scrapper = None
+            PYTHON_SCRAPERS_AVAILABLE = False
 
 grocery_bp = Blueprint('grocery', __name__)
 

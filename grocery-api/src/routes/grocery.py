@@ -14,12 +14,12 @@ import random
 # Import the Python scraper modules
 try:
     # Try relative import first
-    from ..scrapers import aldi_scrapper, iga_scrapper, harris_scrapper
+    from ..scrapers import aldi_scrapper, iga_scrapper, harris_scrapper, coles_scrapper
     PYTHON_SCRAPERS_AVAILABLE = True
 except ImportError:
     try:
         # Try absolute import if relative fails
-        from scrapers import aldi_scrapper, iga_scrapper, harris_scrapper
+        from scrapers import aldi_scrapper, iga_scrapper, harris_scrapper, coles_scrapper
         PYTHON_SCRAPERS_AVAILABLE = True
     except ImportError as e:
         print(f"Warning: Could not import Python scrapers: {e}")
@@ -27,6 +27,7 @@ except ImportError:
         aldi_scrapper = None
         iga_scrapper = None
         harris_scrapper = None
+        coles_scrapper = None
         PYTHON_SCRAPERS_AVAILABLE = False
 
 grocery_bp = Blueprint('grocery', __name__)
@@ -89,6 +90,27 @@ def log_and_print(message, level='info'):
     elif level.lower() == 'debug':
         logger.debug(message)
 
+def parse_iga_price_safe(price_str):
+    """Safely parse IGA price strings like '$0.65 avg/ea' or '$5.99'"""
+    try:
+        if not price_str:
+            return 0.0
+        
+        # Convert to string and clean
+        price_str = str(price_str).strip()
+        
+        # Extract numeric part - look for pattern like $X.XX
+        import re
+        price_match = re.search(r'\$(\d+\.?\d*)', price_str)
+        if price_match:
+            return float(price_match.group(1))
+        else:
+            # Try to remove all non-numeric characters except dots
+            clean_price = re.sub(r'[^\d.]', '', price_str)
+            return float(clean_price) if clean_price else 0.0
+    except (ValueError, AttributeError):
+        return 0.0
+
 # In-memory cache for search results
 search_cache = {}
 CACHE_DURATION = 300  # 5 minutes in seconds
@@ -100,6 +122,12 @@ def get_cache_key(query, store, max_results=50):
 def is_cache_valid(cache_entry):
     """Check if cache entry is still valid"""
     return time.time() - cache_entry['timestamp'] < CACHE_DURATION
+
+def get_category_cache_key(category, stores, dietary_preference='none'):
+    """Generate cache key for category searches"""
+    stores_str = '_'.join(sorted(stores)) if isinstance(stores, list) else stores
+    cache_str = f"category_{category}_{stores_str}_{dietary_preference}"
+    return hashlib.md5(cache_str.encode()).hexdigest()
 
 def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
     """
@@ -122,7 +150,7 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
         if isinstance(store_param, list):
             stores = store_param
         elif store_param == 'all':
-            stores = ['aldi', 'iga', 'harris']
+            stores = ['aldi', 'iga', 'harris', 'coles']
         else:
             stores = [store_param]
         
@@ -132,7 +160,7 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
             s = s.lower().strip()
             if s.endswith('-py'):
                 s = s[:-3]
-            if s in ['aldi', 'iga', 'harris']:
+            if s in ['aldi', 'iga', 'harris', 'coles']:
                 normalized.append(s)
         
         return normalized
@@ -193,7 +221,7 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
                 'price': str(current_price),
                 'discountedPrice': original_price if original_price else discount_price,
                 'discount': discount_text,
-                'numericPrice': iga_scrapper.iga_parse_price(str(current_price)) if iga_scrapper else 0,
+                'numericPrice': parse_iga_price_safe(str(current_price)),
                 'inStock': product.get('available', True),
                 'unitPrice': product.get('unitPrice', product.get('pricePerUnit', '')),
                 'imageUrl': product.get('image', product.get('imageUrl', '')),
@@ -232,6 +260,36 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
             }
         except Exception as e:
             log_and_print(f"Error standardizing Harris product {product}: {e}", 'error')
+            return None
+    
+    def standardize_coles_product(product):
+        """Convert Coles product to standard format"""
+        try:
+            # Coles scraper returns products in a consistent format
+            main_price = product.get('price', '')
+            
+            return {
+                'title': product.get('name', '').strip(),
+                'store': product.get('store', 'Coles'),
+                'price': main_price,
+                'discountedPrice': product.get('discount_price', ''),
+                'discount': product.get('discount_amount', ''),
+                'numericPrice': product.get('price_numeric', 0),
+                'inStock': True,  # Coles file-based scraper assumes in stock
+                'unitPrice': product.get('per_unit_price', ''),
+                'unitPriceText': product.get('per_unit_price', ''),
+                'imageUrl': product.get('imageUrl', ''),
+                'brand': product.get('brand', ''),
+                'category': product.get('category', ''),
+                'productUrl': product.get('productUrl', ''),
+                'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'scraper_source': 'python_coles',
+                'weight_size': product.get('weight_size', ''),
+                'original_price': product.get('original_price', ''),
+                'discount_percentage': product.get('discount_percentage', '')
+            }
+        except Exception as e:
+            log_and_print(f"Error standardizing Coles product {product}: {e}", 'error')
             return None
     
     try:
@@ -339,6 +397,38 @@ def run_python_scrapers(query, store='all', max_results=50, timeout_seconds=30):
                 log_and_print(error_msg, 'error')
                 scraper_errors.append(f"Harris: {error_msg}")
         
+        # Scrape Coles if requested
+        if 'coles' in stores_to_search and coles_scrapper:
+            try:
+                log_and_print(f"Scraping Coles for: {query}")
+                
+                coles_products = coles_scrapper.fetch_coles_products_from_file(
+                    query, 
+                    limit=min(max_results, 100)
+                )
+                
+                if coles_products:
+                    # Enforce max_results to be consistent with API contract
+                    if len(coles_products) > max_results:
+                        log_and_print(f"Coles returned {len(coles_products)} raw products; capping to max_results={max_results}")
+                        coles_products = coles_products[:max_results]
+                    log_and_print(f"Coles returned {len(coles_products)} raw products")
+                    
+                    # Convert to standard format
+                    for product in coles_products:
+                        standardized = standardize_coles_product(product)
+                        if standardized:
+                            all_products.append(standardized)
+                    
+                    log_and_print(f"Coles: {len([p for p in all_products if p.get('store') == 'Coles'])} products standardized")
+                else:
+                    log_and_print("Coles returned no products")
+                    
+            except Exception as e:
+                error_msg = f"Coles scraper failed: {str(e)}"
+                log_and_print(error_msg, 'error')
+                scraper_errors.append(f"Coles: {error_msg}")
+        
         # Remove any None values from failed standardizations
         all_products = [p for p in all_products if p is not None]
         
@@ -386,7 +476,7 @@ def search_products():
         
         store = data.get('store', 'all').lower()
         # Validate store parameter
-        valid_stores = ['aldi', 'iga']  # Both stores supported via Python scrapers
+        valid_stores = ['aldi', 'iga', 'coles']  # All stores supported via Python scrapers
         if store not in valid_stores and store != 'all':
             return jsonify({
                 'error': f'Invalid store "{store}". Supported stores: {", ".join(valid_stores)} or "all"'
@@ -429,8 +519,8 @@ def search_products():
                 # Determine which stores to scrape
                 stores_to_scrape = []
                 if store == 'all':
-                    stores_to_scrape = ['aldi', 'iga']
-                elif store in ['aldi', 'iga']:
+                    stores_to_scrape = ['aldi', 'iga', 'coles']
+                elif store in ['aldi', 'iga', 'coles']:
                     stores_to_scrape = [store]
                 
                 if stores_to_scrape:
@@ -530,12 +620,13 @@ def get_stores():
     stores = [
         {'id': 'aldi', 'name': 'ALDI'},
         {'id': 'iga', 'name': 'IGA'},
+        {'id': 'coles', 'name': 'Coles'},
     ]
     
     return jsonify({
         'success': True,
         'stores': stores,
-        'message': 'ALDI, IGA, and Harris Farm Markets are supported via Python scrapers (ALDI may have API limitations)'
+        'message': 'ALDI, IGA, Coles, and Harris Farm Markets are supported via Python scrapers (ALDI may have API limitations)'
     })
 
 @grocery_bp.route('/health', methods=['GET'])
@@ -549,6 +640,7 @@ def health_check():
         'status': 'healthy',
         'python_scrapers_available': PYTHON_SCRAPERS_AVAILABLE,
         'supported_stores': ['aldi', 'iga', 'harris'] if PYTHON_SCRAPERS_AVAILABLE else [],
+        'supported_categories': ['fruits', 'vegetables', 'dairy', 'meat', 'bakery', 'pantry', 'snacks', 'beverages', 'frozen', 'seafood', 'breakfast', 'healthy'],
         'scraper_info': 'Using Python scrapers for ALDI, IGA, and Harris Farm Markets. Node.js scrapers have been removed.',
         'current_directory': current_dir,
         'cache_entries': len(search_cache),
@@ -610,14 +702,14 @@ def search_all_stores(search_keys, max_results_per_store=50, selected_stores=Non
     """Search ALDI, IGA, and Harris Farm Markets stores for the given search keys"""
     if selected_stores is None or len(selected_stores) == 0:
         # Default to all supported stores
-        search_stores = ['aldi', 'iga', 'harris']
+        search_stores = ['aldi', 'iga', 'harris', 'coles']
     else:
         # Only keep supported stores from selected stores
-        search_stores = [store for store in selected_stores if store in ['aldi', 'iga', 'harris', 'all']]
+        search_stores = [store for store in selected_stores if store in ['aldi', 'iga', 'harris', 'coles', 'all']]
         if 'all' in selected_stores:
-            search_stores = ['aldi', 'iga', 'harris']
+            search_stores = ['aldi', 'iga', 'harris', 'coles']
         elif not search_stores:
-            log_and_print("No supported stores in selection. ALDI, IGA, and Harris Farm Markets are supported.", 'warning')
+            log_and_print("No supported stores in selection. ALDI, IGA, Coles, and Harris Farm Markets are supported.", 'warning')
             return []
     
     all_products = []
@@ -1270,7 +1362,7 @@ def search_store_products(store_name):
         per_page = data.get('perPage', 10)
         
         # Get max_results from request or use default based on store
-        if(store_name in ['iga', 'aldi', 'harris']):
+        if(store_name in ['iga', 'aldi']):
             max_results = data.get('max_results', 10)  # Default 10 for IGA/ALDI/Harris
             dietary_search_terms = {
                 'none': [
@@ -1324,7 +1416,7 @@ def search_store_products(store_name):
         
         # Validate store name
         store_name = store_name.lower().strip()
-        valid_stores = ['aldi', 'iga', 'harris']
+        valid_stores = ['aldi', 'iga', 'harris', 'coles']
         if store_name not in valid_stores:
             return jsonify({
                 'error': f'Invalid store "{store_name}". Supported stores: {", ".join(valid_stores)}'
@@ -1345,7 +1437,7 @@ def search_store_products(store_name):
                     'error': 'empty term'
                 }
 
-            if store_name in ['aldi', 'iga', 'harris']:
+            if store_name in ['aldi', 'iga', 'harris', 'coles']:
                 log_and_print(f"line 1290: Using Python scraper for '{store_name}' for '{term}' with max_results '{max_results}'")
                 scraper_result = run_python_scrapers(term, [store_name], max_results)
             else:
@@ -1431,6 +1523,250 @@ def search_store_products(store_name):
         
     except Exception as e:
         log_and_print(f"Error in search_store_products: {e}", 'error')
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+@grocery_bp.route('/categories', methods=['GET'])
+@cross_origin()
+def get_categories():
+    """Get list of available grocery categories with images"""
+    try:
+        # Define predefined categories with appropriate images
+        categories = [
+            {
+                "id": "fruits",
+                "name": "Fruits",
+                "image": "https://images.unsplash.com/photo-1610832958506-aa56368176cf?q=80&w=200&auto=format&fit=crop",
+                "description": "Fresh fruits and seasonal produce"
+            },
+            {
+                "id": "vegetables", 
+                "name": "Vegetables",
+                "image": "https://images.unsplash.com/photo-1557844352-761f2565b576?q=80&w=200&auto=format&fit=crop",
+                "description": "Fresh vegetables and greens"
+            },
+            {
+                "id": "dairy",
+                "name": "Dairy",
+                "image": "https://images.unsplash.com/photo-1628088062854-d1870b4553da?q=80&w=200&auto=format&fit=crop",
+                "description": "Milk, cheese, yogurt and dairy products"
+            },
+            {
+                "id": "meat",
+                "name": "Meat & Poultry",
+                "image": "https://images.unsplash.com/photo-1467825487722-2a7c4cd62e75?w=900&auto=format&fit=crop&q=60",
+                "description": "Fresh meat, chicken, and poultry"
+            },
+            {
+                "id": "bakery",
+                "name": "Bakery",
+                "image": "https://images.unsplash.com/photo-1608198093002-ad4e005484ec?w=900&auto=format&fit=crop&q=60",
+                "description": "Fresh bread, pastries and baked goods"
+            },
+            {
+                "id": "pantry",
+                "name": "Pantry Staples",
+                "image": "https://images.unsplash.com/photo-1590779033100-9f60a05a013d?w=900&auto=format&fit=crop&q=60",
+                "description": "Rice, pasta, grains and pantry essentials"
+            },
+            {
+                "id": "snacks",
+                "name": "Snacks",
+                "image": "https://images.unsplash.com/photo-1621939514649-280e2ee25f60?w=900&auto=format&fit=crop&q=60",
+                "description": "Chips, nuts, crackers and snack foods"
+            },
+            {
+                "id": "beverages",
+                "name": "Beverages",
+                "image": "https://images.unsplash.com/photo-1595981267035-7b04ca84a82d?w=900&auto=format&fit=crop&q=60",
+                "description": "Juices, soft drinks and beverages"
+            },
+            {
+                "id": "frozen",
+                "name": "Frozen Foods",
+                "image": "https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=900&auto=format&fit=crop&q=60",
+                "description": "Frozen vegetables, meals and ice cream"
+            },
+            {
+                "id": "seafood",
+                "name": "Seafood",
+                "image": "https://images.unsplash.com/photo-1565680018434-b513d5573b07?w=900&auto=format&fit=crop&q=60",
+                "description": "Fresh fish and seafood"
+            },
+            {
+                "id": "breakfast",
+                "name": "Breakfast",
+                "image": "https://images.unsplash.com/photo-1533089860892-a7c6f0a88110?w=900&auto=format&fit=crop&q=60",
+                "description": "Cereals, oats and breakfast items"
+            },
+            {
+                "id": "healthy",
+                "name": "Health & Organic",
+                "image": "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=900&auto=format&fit=crop&q=60",
+                "description": "Organic and health food products"
+            }
+        ]
+        
+        return jsonify({
+            'success': True,
+            'categories': categories,
+            'total_categories': len(categories),
+            'message': f'{len(categories)} categories available'
+        })
+        
+    except Exception as e:
+        log_and_print(f"Error in get_categories: {e}", 'error')
+        return jsonify({
+            'error': 'Internal server error',
+            'details': str(e)
+        }), 500
+
+@grocery_bp.route('/category/<category_name>', methods=['POST'])
+@cross_origin()
+def search_category_products(category_name):
+    """Search for products in a specific category across all supported stores with pagination"""
+    try:
+        data = request.get_json()
+        
+        # Get parameters with defaults
+        max_results = data.get('max_results', 20) if data else 20
+        dietary_preference = data.get('dietary_preference', 'none') if data else 'none'
+        fast_mode = data.get('fast_mode', False) if data else False
+        
+        # Use fast mode with only Coles for quicker results, or all stores for comprehensive results
+        if fast_mode:
+            stores = data.get('stores', ['coles']) if data else ['coles']
+        else:
+            stores = data.get('stores', ['aldi', 'iga', 'harris', 'coles']) if data else ['aldi', 'iga', 'harris', 'coles']
+        
+        page = data.get('page', 1) if data else 1
+        per_page = data.get('per_page', 10) if data else 10
+        
+        # Check cache first
+        cache_key = get_category_cache_key(category_name, stores, f"{dietary_preference}_{fast_mode}")
+        if cache_key in search_cache and is_cache_valid(search_cache[cache_key]):
+            log_and_print(f"Cache hit for category '{category_name}' with stores {stores}")
+            cached_result = search_cache[cache_key]['data']
+            all_products = cached_result.get('products', [])
+            search_term = cached_result.get('search_term', category_name.lower())
+        else:
+            # Cache miss - need to scrape
+            log_and_print(f"Cache miss for category '{category_name}' - performing fresh search")
+            
+            # Use the category name directly as the search term
+            search_term = category_name.lower()
+            
+            # Apply dietary preference modifiers to the search term
+            if dietary_preference == 'vegetarian':
+                if category_name.lower() == 'meat':
+                    search_term = 'vegetarian protein'
+                else:
+                    search_term = f"vegetarian {category_name.lower()}"
+                    
+            elif dietary_preference == 'vegan':
+                if category_name.lower() == 'dairy':
+                    search_term = 'plant based dairy'
+                elif category_name.lower() == 'meat':
+                    search_term = 'vegan protein'
+                else:
+                    search_term = f"vegan {category_name.lower()}"
+                    
+            elif dietary_preference == 'gluten free':
+                search_term = f"gluten free {category_name.lower()}"
+            
+            log_and_print(f"Searching category '{category_name}' with search term: '{search_term}' (dietary: {dietary_preference})")
+            log_and_print(f"Using max 30 products per store for category search across stores: {stores}")
+            
+            all_products = []
+            
+            # Search the category name across supported stores using the existing Python scrapers
+            try:
+                # Use run_python_scrapers to search across all stores
+                # Limit each store to 30 products maximum for category searches (per user request)
+                max_results_per_store = 30
+                log_and_print(f"Calling scrapers with max_results_per_store={max_results_per_store}")
+                scraper_result = run_python_scrapers(
+                    search_term, 
+                    stores, 
+                    max_results=max_results_per_store
+                )
+                
+                if 'products' in scraper_result and scraper_result['products']:
+                    # Add category metadata to products
+                    for product in scraper_result['products']:
+                        product['category'] = category_name
+                        product['search_term'] = search_term
+                    
+                    all_products.extend(scraper_result['products'])
+                    log_and_print(f"Found {len(scraper_result['products'])} products for category '{category_name}'")
+                    
+            except Exception as e:
+                log_and_print(f"Error searching for category '{category_name}': {e}", 'warning')
+            
+            # Remove duplicates based on title and store
+            seen = set()
+            unique_products = []
+            for product in all_products:
+                key = f"{product.get('title', '').lower()}_{product.get('store', '').lower()}"
+                if key not in seen:
+                    seen.add(key)
+                    unique_products.append(product)
+            
+            # Sort by price (cheapest first)
+            unique_products.sort(key=lambda x: x.get('numericPrice', float('inf')))
+            
+            # Cache the results
+            search_cache[cache_key] = {
+                'timestamp': time.time(),
+                'data': {
+                    'products': unique_products,
+                    'search_term': search_term
+                }
+            }
+            log_and_print(f"Cached results for category '{category_name}' with {len(unique_products)} products")
+            all_products = unique_products
+        
+        # Apply pagination
+        total_products = len(all_products)
+        start_index = (page - 1) * per_page
+        end_index = start_index + per_page
+        paginated_products = all_products[start_index:end_index]
+        
+        # Calculate pagination info
+        total_pages = (total_products + per_page - 1) // per_page  # Ceiling division
+        has_next = page < total_pages
+        has_prev = page > 1
+        
+        # Get category info
+        category_info = {
+            'id': category_name.lower(),
+            'name': category_name.title(),
+            'total_products': len(paginated_products)
+        }
+        
+        return jsonify({
+            'success': True,
+            'category': category_info,
+            'dietary_preference': dietary_preference,
+            'search_term': search_term,
+            'stores_searched': stores,
+            'pagination': {
+                'page': page,
+                'per_page': per_page,
+                'total_items': total_products,
+                'total_pages': total_pages,
+                'has_next': has_next,
+                'has_prev': has_prev
+            },
+            'total_products': len(paginated_products),
+            'products': paginated_products,
+            'scraped_at': time.strftime('%Y-%m-%dT%H:%M:%SZ')
+        })
+        
+    except Exception as e:
+        log_and_print(f"Error in search_category_products: {e}", 'error')
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
